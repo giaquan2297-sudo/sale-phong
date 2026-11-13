@@ -1,0 +1,28 @@
+{
+  "name": "sale-tro",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Web quản lý bảng hàng phòng trọ chạy local và gửi khách qua Zalo PC",
+  "scripts": {
+    "dev": "concurrently -n SERVER,WEB -c cyan,green \"node --watch server/index.js\" \"npm --prefix web run dev\"",
+    "build": "npm --prefix web install && npm --prefix web run build",
+    "install:all": "npm install && npm --prefix web install",
+    "start": "NODE_ENV=production node server/index.js",
+    "public": "bash ./scripts/start-public-tunnel.sh",
+    "tunnel:cloudflare": "bash ./scripts/start-public-tunnel.sh",
+    "tunnel:localtunnel": "npx localtunnel --port 3000",
+    "autostart:on": "bash ./scripts/setup-autostart.sh",
+    "autostart:off": "bash ./scripts/uninstall-autostart.sh",
+    "seed": "node server/seed.js",
+    "test": "node --test server/tests/*.test.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "googleapis": "^148.0.0",
+    "multer": "^1.4.5-lts.2"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
