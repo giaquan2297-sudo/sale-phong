@@ -5,3 +5,4 @@ dist/
 web/dist/
 .DS_Store
 *.log
+.ssh_key*
