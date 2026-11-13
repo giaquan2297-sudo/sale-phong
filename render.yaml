@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     region: singapore
-    buildCommand: npm install && npm --prefix web install && npm --prefix web run build
+    buildCommand: npm install --include=dev && npm --prefix web install --include=dev && npm --prefix web run build
     startCommand: npm start
     envVars:
       - key: NODE_VERSION

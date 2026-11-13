@@ -2,7 +2,6 @@ node_modules/
 data/
 .env
 dist/
-web/dist/
 .DS_Store
 *.log
 .ssh_key*
