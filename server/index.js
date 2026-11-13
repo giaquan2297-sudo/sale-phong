@@ -114,9 +114,10 @@ export function createApp() {
 
   // Serve built React frontend in production
   const webDistDir = path.join(ROOT_DIR, 'web', 'dist');
-  if (process.env.NODE_ENV === 'production' && fs.existsSync(webDistDir)) {
+  if (fs.existsSync(webDistDir)) {
     app.use(express.static(webDistDir));
-    app.get('/{*splat}', (req, res) => {
+    app.use((req, res, next) => {
+      if (req.method !== 'GET') return next();
       if (req.path.startsWith('/api/') || req.path.startsWith('/images/')) {
         return res.status(404).json({ error: 'Not found' });
       }
