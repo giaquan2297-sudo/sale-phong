@@ -117,7 +117,7 @@ export function createApp() {
   if (fs.existsSync(webDistDir)) {
     app.use(express.static(webDistDir));
     app.use((req, res, next) => {
-      if (req.method !== 'GET') return next();
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
       if (req.path.startsWith('/api/') || req.path.startsWith('/images/')) {
         return res.status(404).json({ error: 'Not found' });
       }
