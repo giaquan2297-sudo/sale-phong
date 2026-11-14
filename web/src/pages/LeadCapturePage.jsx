@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Building2,
   CheckCircle2,
@@ -15,9 +16,12 @@ import {
   ArrowRight,
   Loader2,
   RotateCcw,
+  Share2,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { formatPrice } from '../utils/format';
+import { useToast } from '../components/Toast';
+import LeadFormShareModal from '../components/LeadFormShareModal';
 
 const DISTRICT_OPTIONS = [
   'Cầu Giấy',
@@ -73,6 +77,10 @@ const URGENCY_OPTIONS = [
 ];
 
 export default function LeadCapturePage() {
+  const toast = useToast();
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [selectedDistricts, setSelectedDistricts] = useState(['Cầu Giấy']);
@@ -166,9 +174,69 @@ export default function LeadCapturePage() {
     setError('');
   };
 
+  const handleCopyLink = async () => {
+    const url =
+      typeof window !== 'undefined' && window.location?.origin
+        ? `${window.location.origin}/nhu-cau`
+        : '/nhu-cau';
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedLink(true);
+      toast('Đã sao chép link biểu mẫu gửi khách');
+      setTimeout(() => setCopiedLink(false), 2500);
+    } catch {
+      toast('Link tìm phòng: ' + url);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-slate-100/60 to-slate-200/50 py-6 px-3 sm:px-4 text-slate-800">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-slate-100/60 to-slate-200/50 py-5 sm:py-6 px-3 sm:px-4 text-slate-800">
       <div className="max-w-xl mx-auto space-y-4">
+        {/* Top Navigation */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold transition-colors shadow-2xs"
+            title="Quay lại bảng hàng phòng trống"
+          >
+            <span>🏠 Xem bảng hàng phòng trống</span>
+          </Link>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs sm:text-sm font-semibold transition-colors shadow-2xs ${
+                copiedLink
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                  : 'border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#0D6E6E]'
+              }`}
+              title="Sao chép đường link biểu mẫu gửi khách hàng"
+            >
+              <span>{copiedLink ? '✓ Đã sao chép' : '📋 Sao chép link gửi khách'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowShareModal(true)}
+              className="p-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors shadow-2xs"
+              title="Mở bảng chia sẻ biểu mẫu & tin nhắn Zalo"
+            >
+              <Share2 className="w-4 h-4 text-slate-600" />
+            </button>
+          </div>
+        </div>
+
         {/* Top Branding & Title Header */}
         <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-sm border border-slate-200 text-center space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[#0D6E6E] text-xs font-semibold">
@@ -553,6 +621,14 @@ export default function LeadCapturePage() {
           </form>
         )}
       </div>
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <LeadFormShareModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+        />
+      )}
     </div>
   );
 }

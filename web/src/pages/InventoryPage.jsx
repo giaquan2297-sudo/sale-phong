@@ -15,6 +15,7 @@ import {
   X,
   FileSpreadsheet,
   Calendar,
+  ClipboardList,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -31,6 +32,7 @@ import RoomDetailDrawer from '../components/RoomDetailDrawer';
 import ZaloSendModal from '../components/ZaloSendModal';
 import QuickAddSheetModal from '../components/QuickAddSheetModal';
 import LeadCaptureModal from '../components/LeadCaptureModal';
+import LeadFormShareModal from '../components/LeadFormShareModal';
 
 const PRICE_PRESETS = [
   { label: 'Tất cả mức giá', min: '', max: '' },
@@ -65,6 +67,7 @@ export default function InventoryPage() {
   const [detailRoomId, setDetailRoomId] = useState(null);
   const [zaloRooms, setZaloRooms] = useState(null);
   const [leadCaptureRoom, setLeadCaptureRoom] = useState(null);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   useEffect(() => {
     const lid = searchParams.get('landlord_id') || '';
@@ -250,6 +253,16 @@ export default function InventoryPage() {
           >
             <FileSpreadsheet className="w-4 h-4" />
             <span>Thêm bảng hàng</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowShareModal(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#0D6E6E] text-sm font-semibold shadow-xs transition-colors"
+            title="Lấy link biểu mẫu nhu cầu gửi khách"
+          >
+            <ClipboardList className="w-4 h-4" />
+            <span>Biểu mẫu gửi khách</span>
           </button>
 
           <button
@@ -851,6 +864,13 @@ export default function InventoryPage() {
           isOpen={Boolean(leadCaptureRoom)}
           onClose={() => setLeadCaptureRoom(null)}
           room={leadCaptureRoom}
+        />
+      )}
+
+      {showShareModal && (
+        <LeadFormShareModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
         />
       )}
     </div>

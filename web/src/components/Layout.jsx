@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Building2,
@@ -15,23 +16,27 @@ import {
   ShieldCheck,
   Briefcase,
   User,
+  ClipboardList,
 } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useToast } from './Toast';
 import { useAuth } from '../context/AuthContext';
 import LoginModal from './LoginModal';
+import LeadFormShareModal from './LeadFormShareModal';
 
 export default function Layout() {
   const toast = useToast();
   const sseConnected = useSSE(toast);
   const { user, logout, isAdmin, isUser, isGuest, isLoginModalOpen, openLoginModal, closeLoginModal } =
     useAuth();
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
   // Determine navigation items based on role
   let navItems = [];
   if (isAdmin) {
     navItems = [
       { to: '/', label: 'Bảng hàng', icon: Building2, end: true },
+      { to: '/nhu-cau', label: 'Biểu mẫu gửi khách', icon: ClipboardList },
       { to: '/landlords', label: 'Chủ nhà', icon: Users },
       { to: '/customers', label: 'Khách hàng', icon: UserCheck },
       { to: '/commissions', label: 'Bảng hoa hồng', icon: CircleDollarSign },
@@ -42,6 +47,7 @@ export default function Layout() {
   } else if (isUser) {
     navItems = [
       { to: '/', label: 'Bảng hàng', icon: Building2, end: true },
+      { to: '/nhu-cau', label: 'Biểu mẫu gửi khách', icon: ClipboardList },
       { to: '/customers', label: 'Khách hàng', icon: UserCheck },
       { to: '/commissions', label: 'Bảng hoa hồng', icon: CircleDollarSign },
       { to: '/storage', label: 'Dung lượng', icon: HardDrive },
@@ -50,6 +56,7 @@ export default function Layout() {
     // Guest
     navItems = [
       { to: '/', label: 'Bảng hàng phòng trống', icon: Building2, end: true },
+      { to: '/nhu-cau', label: 'Đăng ký tìm phòng', icon: ClipboardList },
     ];
   }
 
@@ -74,7 +81,15 @@ export default function Layout() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 md:hidden">
+          <div className="flex items-center gap-1.5 md:hidden">
+            <button
+              type="button"
+              onClick={() => setIsShareModalOpen(true)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-teal-200 bg-teal-50 text-[#0D6E6E] hover:bg-teal-100 text-xs font-semibold transition-colors shadow-2xs"
+              title="Lấy link gửi khách"
+            >
+              <span>📋 Lấy link gửi khách</span>
+            </button>
             {isGuest ? (
               <button
                 type="button"
@@ -167,6 +182,17 @@ export default function Layout() {
           )}
         </div>
 
+        {/* Quick Lead Form Link Button (Desktop Sidebar) */}
+        <div className="hidden md:block p-2 border-b border-slate-100">
+          <button
+            type="button"
+            onClick={() => setIsShareModalOpen(true)}
+            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-teal-200 bg-teal-50/70 hover:bg-teal-100/80 text-[#0D6E6E] text-xs font-bold transition-colors shadow-2xs"
+          >
+            <span>📋 Lấy link gửi khách</span>
+          </button>
+        </div>
+
         {/* Navigation items */}
         <nav className="flex md:flex-col gap-1 p-2 overflow-x-auto md:overflow-visible flex-1">
           {navItems.map((item) => {
@@ -237,6 +263,12 @@ export default function Layout() {
           <Outlet />
         </div>
       </main>
+
+      {/* Lead Form Share Modal */}
+      <LeadFormShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+      />
 
       {/* Global Login / Register Modal */}
       <LoginModal isOpen={isLoginModalOpen} onClose={closeLoginModal} />
