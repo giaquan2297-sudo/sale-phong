@@ -10,6 +10,9 @@ import {
   parsePositiveIntId,
   safeTrim,
 } from '../utils/validation.js';
+import { enrichCustomer, normalizeTargetDate } from '../utils/customerUtils.js';
+
+export { enrichCustomer, normalizeTargetDate };
 
 const router = Router();
 
@@ -225,7 +228,7 @@ export function saveCustomerDeal(customerId, b, existingCustomer = null) {
 }
 
 router.get('/customers', (req, res) => {
-  const { status, q } = req.query;
+  const { status, q, urgency, source, needs_reminder } = req.query;
   let sql = `
     SELECT
       c.*,
@@ -246,6 +249,14 @@ router.get('/customers', (req, res) => {
     conditions.push('c.status = ?');
     params.push(status);
   }
+  if (urgency && urgency !== 'all') {
+    conditions.push('c.urgency = ?');
+    params.push(urgency);
+  }
+  if (source && source !== 'all') {
+    conditions.push('c.source = ?');
+    params.push(source);
+  }
   if (q && safeTrim(q)) {
     conditions.push('(c.name LIKE ? OR c.zalo_phone LIKE ? OR c.districts LIKE ?)');
     const term = `%${safeTrim(q)}%`;
@@ -256,7 +267,13 @@ router.get('/customers', (req, res) => {
   }
   sql += ` GROUP BY c.id ORDER BY c.updated_at DESC, c.id DESC`;
 
-  const customers = db.prepare(sql).all(...params);
+  let customers = db
+    .prepare(sql)
+    .all(...params)
+    .map((c) => enrichCustomer(c));
+  if (needs_reminder === 'true' || needs_reminder === '1') {
+    customers = customers.filter((c) => c.needs_followup_reminder);
+  }
   res.json(customers);
 });
 
@@ -297,7 +314,21 @@ router.get('/customers/:id/sends', (req, res) => {
     return { ...send, room_ids: roomIds, rooms };
   });
 
-  res.json({ customer, sends: enrichedSends });
+  res.json({ customer: enrichCustomer(customer), sends: enrichedSends });
+});
+
+router.get('/customers/:id', (req, res) => {
+  const id = parsePositiveIntId(req.params.id);
+  if (!id) {
+    return res.status(400).json({ error: 'ID khách hàng không hợp lệ' });
+  }
+
+  const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+  if (!customer) {
+    return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+  }
+
+  res.json(enrichCustomer(customer));
 });
 
 router.post('/customers', (req, res) => {
@@ -327,12 +358,21 @@ router.post('/customers', (req, res) => {
     return res.status(400).json({ error: 'Trạng thái khách hàng không hợp lệ' });
   }
 
+  const urgency =
+    b.urgency !== undefined && ['gap', 'binh_thuong', 'hen_truoc'].includes(safeTrim(b.urgency))
+      ? safeTrim(b.urgency)
+      : 'binh_thuong';
+  const targetDate = normalizeTargetDate(
+    b.target_date !== undefined ? b.target_date : b.move_in_date
+  );
+  const source = safeTrim(b.source) || 'manual';
+
   const result = db
     .prepare(
       `
       INSERT INTO customers (
-        name, zalo_phone, budget_min, budget_max, districts, need_note, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+        name, zalo_phone, budget_min, budget_max, districts, need_note, status, urgency, target_date, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `
     )
     .run(
@@ -342,7 +382,10 @@ router.post('/customers', (req, res) => {
       budgetMaxRes.value === 0 ? null : budgetMaxRes.value,
       safeTrim(b.districts),
       safeTrim(b.need_note),
-      status
+      status,
+      urgency,
+      targetDate,
+      source
     );
 
   const customerId = result.lastInsertRowid;
@@ -352,10 +395,10 @@ router.post('/customers', (req, res) => {
 
   const created = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId);
   broadcastEvent('customers_changed', { action: 'created', customerId: created.id });
-  res.status(201).json({ ...created, send_count: 0, last_sent_at: null });
+  res.status(201).json(enrichCustomer({ ...created, send_count: 0, last_sent_at: null }));
 });
 
-router.put('/customers/:id', (req, res) => {
+function handleUpdateCustomer(req, res) {
   const id = parsePositiveIntId(req.params.id);
   if (!id) {
     return res.status(400).json({ error: 'ID khách hàng không hợp lệ' });
@@ -397,6 +440,24 @@ router.put('/customers/:id', (req, res) => {
     return res.status(400).json({ error: 'Trạng thái khách hàng không hợp lệ' });
   }
 
+  let urgency = existing.urgency || 'binh_thuong';
+  if (b.urgency !== undefined) {
+    const cleanUrgency = safeTrim(b.urgency);
+    if (['gap', 'binh_thuong', 'hen_truoc'].includes(cleanUrgency)) {
+      urgency = cleanUrgency;
+    }
+  }
+
+  let targetDate = existing.target_date || '';
+  if (b.target_date !== undefined || b.move_in_date !== undefined) {
+    targetDate = normalizeTargetDate(b.target_date !== undefined ? b.target_date : b.move_in_date);
+  }
+
+  let source = existing.source || 'manual';
+  if (b.source !== undefined && safeTrim(b.source)) {
+    source = safeTrim(b.source);
+  }
+
   db.prepare(
     `
     UPDATE customers SET
@@ -407,6 +468,9 @@ router.put('/customers/:id', (req, res) => {
       districts = ?,
       need_note = ?,
       status = ?,
+      urgency = ?,
+      target_date = ?,
+      source = ?,
       updated_at = datetime('now', 'localtime')
     WHERE id = ?
   `
@@ -420,6 +484,9 @@ router.put('/customers/:id', (req, res) => {
     b.districts !== undefined && b.districts !== null ? safeTrim(b.districts) : existing.districts,
     b.need_note !== undefined && b.need_note !== null ? safeTrim(b.need_note) : existing.need_note,
     status,
+    urgency,
+    targetDate,
+    source,
     existing.id
   );
 
@@ -429,8 +496,11 @@ router.put('/customers/:id', (req, res) => {
 
   const updated = db.prepare('SELECT * FROM customers WHERE id = ?').get(existing.id);
   broadcastEvent('customers_changed', { action: 'updated', customerId: updated.id });
-  res.json(updated);
-});
+  res.json(enrichCustomer(updated));
+}
+
+router.put('/customers/:id', handleUpdateCustomer);
+router.patch('/customers/:id', handleUpdateCustomer);
 
 router.post('/customers/:id/close-deal', (req, res) => {
   const id = parsePositiveIntId(req.params.id);
@@ -467,7 +537,7 @@ router.post('/customers/:id/close-deal', (req, res) => {
     )
     .get(dealId);
 
-  res.status(200).json({ customer: updated, deal });
+  res.status(200).json({ customer: enrichCustomer(updated), deal });
 });
 
 router.delete('/customers/:id', (req, res) => {

@@ -238,6 +238,31 @@ const migrations = [
       insertUser.run('sale', hashPassword('sale123'), 'Môi giới Sale', 'user', '');
     },
   },
+  {
+    version: 5,
+    up(database) {
+      const customerCols = database
+        .prepare('PRAGMA table_info(customers)')
+        .all()
+        .map((c) => c.name);
+
+      const addCol = (colName, colDef) => {
+        if (!customerCols.includes(colName)) {
+          database.exec(`ALTER TABLE customers ADD COLUMN ${colName} ${colDef}`);
+        }
+      };
+
+      addCol('urgency', "TEXT DEFAULT 'binh_thuong'");
+      addCol('target_date', "TEXT DEFAULT ''");
+      addCol('source', "TEXT DEFAULT 'manual'");
+
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_customers_urgency ON customers(urgency);
+        CREATE INDEX IF NOT EXISTS idx_customers_target_date ON customers(target_date);
+        CREATE INDEX IF NOT EXISTS idx_customers_source ON customers(source);
+      `);
+    },
+  },
 ];
 
 function runMigrations() {

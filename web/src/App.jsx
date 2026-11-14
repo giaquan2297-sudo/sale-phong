@@ -13,6 +13,7 @@ const SheetsPage = lazy(() => import('./pages/SheetsPage'));
 const StoragePage = lazy(() => import('./pages/StoragePage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const PublicCartPage = lazy(() => import('./pages/PublicCartPage'));
+const LeadCapturePage = lazy(() => import('./pages/LeadCapturePage'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -38,6 +39,8 @@ export default function App() {
             <Suspense fallback={<PageLoader />}>
               <Routes>
                 <Route path="/share/:slug" element={<PublicCartPage />} />
+                <Route path="/nhu-cau" element={<LeadCapturePage />} />
+                <Route path="/dang-ky-tim-phong" element={<LeadCapturePage />} />
                 <Route element={<Layout />}>
                   <Route path="/" element={<InventoryPage />} />
                   <Route path="/landlords" element={<LandlordsPage />} />

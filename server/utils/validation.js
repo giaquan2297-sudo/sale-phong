@@ -6,7 +6,10 @@ export const ALLOWED_CUSTOMER_STATUSES = [
   'dang_tim',
   'da_thue',
   'tam_ngung',
+  'huy',
 ];
+export const ALLOWED_CUSTOMER_URGENCIES = ['gap', 'binh_thuong', 'hen_truoc'];
+export const ALLOWED_CUSTOMER_SOURCES = ['manual', 'web_form'];
 export const ALLOWED_COMMISSION_STATUSES = ['cho_thu', 'da_thu', 'thu_mot_phan'];
 
 export function safeTrim(value) {

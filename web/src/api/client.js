@@ -31,6 +31,8 @@ export const api = {
   // Public Leads
   submitPublicLead: (payload) =>
     request('/api/public/leads', { method: 'POST', body: JSON.stringify(payload) }),
+  createLead: (payload) =>
+    request('/api/leads', { method: 'POST', body: JSON.stringify(payload) }),
 
   // Health
   health: () => request('/api/health'),

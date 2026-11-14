@@ -19,6 +19,10 @@ import {
   MessageCircle,
   DollarSign,
   Calendar,
+  Flame,
+  Bell,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { CUSTOMER_STATUSES, CUSTOMER_STATUS_MAP, STATUS_MAP } from '../utils/constants';
@@ -31,6 +35,71 @@ function getEffectiveStatus(status) {
   if (status === 'da_chot' || status === 'da_thue') return 'da_chot';
   if (status === 'da_cham') return 'da_cham';
   return 'chua_cham';
+}
+
+function getDaysUntilTarget(targetDate) {
+  if (!targetDate) return null;
+  const parts = String(targetDate).trim().split('-');
+  if (parts.length !== 3) return null;
+  const [y, m, d] = parts.map(Number);
+  if (!y || !m || !d) return null;
+  const target = new Date(y, m - 1, d);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  target.setHours(0, 0, 0, 0);
+  const diffTime = target.getTime() - today.getTime();
+  return Math.round(diffTime / (1000 * 60 * 60 * 24));
+}
+
+function isCustomerUrgent(c) {
+  return Boolean(c.is_urgent || c.urgency === 'gap');
+}
+
+function isCustomerFollowup(c) {
+  if (c.needs_followup_reminder !== undefined) {
+    return Boolean(c.needs_followup_reminder);
+  }
+  const eff = getEffectiveStatus(c.status);
+  if (eff === 'da_chot') return false;
+  if (!c.target_date) return false;
+  const days =
+    typeof c.days_until_target === 'number'
+      ? c.days_until_target
+      : getDaysUntilTarget(c.target_date);
+  return days !== null && days >= -7 && days <= 30;
+}
+
+function renderUrgentBadge(c) {
+  if (!isCustomerUrgent(c)) return null;
+  return (
+    <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1 shrink-0">
+      <span>🔥 CẦN GẤP</span>
+    </span>
+  );
+}
+
+function renderTargetDateBadge(c) {
+  if (!c.target_date) return null;
+  const days =
+    typeof c.days_until_target === 'number'
+      ? c.days_until_target
+      : getDaysUntilTarget(c.target_date);
+  if (days === null) return null;
+
+  let label = '';
+  if (days > 0) {
+    label = `⏰ Sắp cần phòng (còn ${days} ngày - ${c.target_date})`;
+  } else if (days === 0) {
+    label = `⏰ Cần phòng hôm nay (${c.target_date})`;
+  } else {
+    label = `⏰ Quá hạn cần phòng (${Math.abs(days)} ngày trước - ${c.target_date})`;
+  }
+
+  return (
+    <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-800 border border-amber-200 inline-flex items-center gap-1 shrink-0">
+      <span>{label}</span>
+    </span>
+  );
 }
 
 export default function CustomersPage() {
@@ -56,6 +125,8 @@ export default function CustomersPage() {
     districts: '',
     need_note: '',
     status: 'chua_cham',
+    urgency: 'binh_thuong',
+    target_date: '',
     deal_room_id: '',
     deal_room_code: '',
     deal_building_name: '',
@@ -93,17 +164,28 @@ export default function CustomersPage() {
     return counts;
   }, [customers]);
 
+  const urgentCustomers = useMemo(() => customers.filter(isCustomerUrgent), [customers]);
+  const followupCustomers = useMemo(() => customers.filter(isCustomerFollowup), [customers]);
+
   // Filtered customer list
   const filteredCustomers = useMemo(() => {
     return customers.filter((c) => {
       const eff = getEffectiveStatus(c.status);
-      if (activeTab !== 'all' && eff !== activeTab) return false;
+      if (activeTab === 'urgent') {
+        if (!isCustomerUrgent(c)) return false;
+      } else if (activeTab === 'followup') {
+        if (!isCustomerFollowup(c)) return false;
+      } else if (activeTab !== 'all' && eff !== activeTab) {
+        return false;
+      }
+
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchesName = c.name && c.name.toLowerCase().includes(q);
         const matchesPhone = c.zalo_phone && c.zalo_phone.toLowerCase().includes(q);
         const matchesDistrict = c.districts && c.districts.toLowerCase().includes(q);
-        if (!matchesName && !matchesPhone && !matchesDistrict) return false;
+        const matchesNote = c.need_note && c.need_note.toLowerCase().includes(q);
+        if (!matchesName && !matchesPhone && !matchesDistrict && !matchesNote) return false;
       }
       return true;
     });
@@ -122,6 +204,16 @@ export default function CustomersPage() {
     queryFn: api.getCarts,
   });
 
+  const copyLeadLink = async () => {
+    const url = `${window.location.origin}/nhu-cau`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Đã sao chép link đăng ký tìm phòng: ' + url);
+    } catch {
+      toast('Link tìm phòng: ' + url);
+    }
+  };
+
   const openCreate = () => {
     setEditing(null);
     setForm({
@@ -132,6 +224,8 @@ export default function CustomersPage() {
       districts: '',
       need_note: '',
       status: 'chua_cham',
+      urgency: 'binh_thuong',
+      target_date: '',
       deal_room_id: '',
       deal_room_code: '',
       deal_building_name: '',
@@ -158,6 +252,8 @@ export default function CustomersPage() {
       districts: c.districts || '',
       need_note: c.need_note || '',
       status: eff,
+      urgency: c.urgency || 'binh_thuong',
+      target_date: c.target_date || '',
       deal_room_id: '',
       deal_room_code: '',
       deal_building_name: '',
@@ -201,6 +297,8 @@ export default function CustomersPage() {
         districts: form.districts.trim(),
         need_note: form.need_note.trim(),
         status: form.status,
+        urgency: form.urgency || 'binh_thuong',
+        target_date: form.target_date || '',
       };
 
       const saved = editing
@@ -284,7 +382,15 @@ export default function CustomersPage() {
             Lưu trữ danh sách khách, chăm sóc theo trạng thái và chốt phòng tính hoa hồng
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={copyLeadLink}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium transition-colors shadow-xs"
+            title="Sao chép link form tìm phòng gửi khách hàng"
+          >
+            <span>📋 Sao chép link gửi khách</span>
+          </button>
           <Link
             to="/commissions"
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-sm font-medium transition-colors"
@@ -302,6 +408,52 @@ export default function CustomersPage() {
           </button>
         </div>
       </div>
+
+      {/* Reminder Banner */}
+      {(followupCustomers.length > 0 || urgentCustomers.length > 0) && (
+        <div className="p-3.5 sm:p-4 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4" />
+            </div>
+            <div className="text-xs sm:text-sm text-slate-800 font-medium">
+              <span className="font-bold text-amber-900">🔔 Nhắc nhở chăm sóc: </span>
+              {followupCustomers.length > 0 && (
+                <span>
+                  Có <strong>{followupCustomers.length}</strong> khách sắp cần phòng trong 30 ngày tới
+                </span>
+              )}
+              {followupCustomers.length > 0 && urgentCustomers.length > 0 && <span> & </span>}
+              {urgentCustomers.length > 0 && (
+                <span className="text-rose-700 font-bold">
+                  {urgentCustomers.length} khách cần gấp!
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {urgentCustomers.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('urgent')}
+                className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-xs transition-colors"
+              >
+                🔥 Xem {urgentCustomers.length} khách gấp
+              </button>
+            )}
+            {followupCustomers.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('followup')}
+                className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-xs transition-colors"
+              >
+                ⏰ Xem {followupCustomers.length} khách sắp đến hạn
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Filter Tabs */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 pb-2">
@@ -321,6 +473,44 @@ export default function CustomersPage() {
             }`}
           >
             {statusCounts.all}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('urgent')}
+          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+            activeTab === 'urgent'
+              ? 'bg-rose-600 text-white shadow-xs'
+              : 'bg-white text-rose-700 hover:bg-rose-50 border border-rose-200'
+          }`}
+        >
+          <span>🔥 Cần gấp</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              activeTab === 'urgent' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-700'
+            }`}
+          >
+            {urgentCustomers.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('followup')}
+          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+            activeTab === 'followup'
+              ? 'bg-amber-600 text-white shadow-xs'
+              : 'bg-white text-amber-800 hover:bg-amber-50 border border-amber-200'
+          }`}
+        >
+          <span>⏰ Sắp đến hạn (&le;30 ngày)</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              activeTab === 'followup' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800'
+            }`}
+          >
+            {followupCustomers.length}
           </span>
         </button>
 
@@ -415,8 +605,15 @@ export default function CustomersPage() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="font-semibold text-sm text-slate-900 truncate">
-                          {c.name}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-sm text-slate-900 truncate">
+                            {c.name}
+                          </span>
+                          {c.source === 'web_form' && (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-medium">
+                              🌐 Web
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-slate-500 font-mono mt-0.5 flex items-center gap-1.5">
                           <span>{c.zalo_phone || 'Chưa có SĐT'}</span>
@@ -442,6 +639,14 @@ export default function CustomersPage() {
                         <span>{st.label}</span>
                       </span>
                     </div>
+
+                    {/* Prominent Badges */}
+                    {(isCustomerUrgent(c) || (c.target_date && isCustomerFollowup(c))) && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {renderUrgentBadge(c)}
+                        {renderTargetDateBadge(c)}
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between mt-2 text-xs text-slate-500">
                       <span className="tabular-nums truncate max-w-[200px]">
@@ -510,8 +715,13 @@ export default function CustomersPage() {
               {/* Customer Header */}
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-bold text-lg text-slate-900">{activeCustomer.name}</h3>
+                    {activeCustomer.source === 'web_form' && (
+                      <span className="text-[11px] px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-medium">
+                        🌐 Web Form
+                      </span>
+                    )}
                     {(() => {
                       const eff = getEffectiveStatus(activeCustomer.status);
                       const st = CUSTOMER_STATUS_MAP[eff] || CUSTOMER_STATUSES[0];
@@ -524,6 +734,8 @@ export default function CustomersPage() {
                         </span>
                       );
                     })()}
+                    {renderUrgentBadge(activeCustomer)}
+                    {renderTargetDateBadge(activeCustomer)}
                   </div>
                   <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className="flex items-center gap-1">
@@ -537,6 +749,15 @@ export default function CustomersPage() {
                       Ngân sách: {activeCustomer.budget_min ? formatPrice(activeCustomer.budget_min) : '0'} –{' '}
                       {activeCustomer.budget_max ? formatPrice(activeCustomer.budget_max) : '...'}
                     </span>
+                    {activeCustomer.target_date && (
+                      <>
+                        <span>•</span>
+                        <span className="flex items-center gap-1 text-slate-700 font-medium">
+                          <Calendar className="w-3 h-3 text-slate-400" />
+                          <span>Ngày cần: {activeCustomer.target_date}</span>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -849,6 +1070,34 @@ export default function CustomersPage() {
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Mức độ cần phòng (Urgency)
+                  </label>
+                  <select
+                    value={form.urgency}
+                    onChange={(e) => setForm((p) => ({ ...p, urgency: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white font-medium"
+                  >
+                    <option value="gap">🔥 Cần gấp trong vài ngày tới</option>
+                    <option value="binh_thuong">🌿 Bình thường trong tháng này</option>
+                    <option value="hen_truoc">⏳ Chưa cần ngay / Hẹn ngày</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Ngày cần phòng / Dọn vào
+                  </label>
+                  <input
+                    type="date"
+                    value={form.target_date}
+                    onChange={(e) => setForm((p) => ({ ...p, target_date: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
+                  />
                 </div>
               </div>
 
