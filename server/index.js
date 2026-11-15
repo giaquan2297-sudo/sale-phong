@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { IMAGES_DIR, ROOT_DIR } from './db.js';
-import { addSseClient } from './services/sse.js';
+import { addSseClient, broadcastReload } from './services/sse.js';
 import { runImageCleanup } from './services/cleanup.js';
 import { startSyncScheduler } from './services/sheetSync.js';
 import { getLanIps, getNetworkInfo } from './services/network.js';
@@ -150,6 +150,11 @@ export function createApp() {
   app.get('/api/network-info', (req, res) => {
     const port = req.socket?.localPort || process.env.PORT || 3000;
     res.json(getNetworkInfo(port));
+  });
+
+  app.post('/api/system/reload', (req, res) => {
+    broadcastReload();
+    res.json({ ok: true, reloaded: true });
   });
 
   app.get('/api/events', (req, res) => {
@@ -315,6 +320,15 @@ export function startServer() {
     }, 24 * 60 * 60 * 1000);
 
     startSyncScheduler();
+
+    // Notify already-connected browser clients to reload to the latest bundle after server startup
+    setTimeout(() => {
+      try {
+        broadcastReload();
+      } catch (err) {
+        console.error('Lỗi khi phát sự kiện system_reload:', err.message);
+      }
+    }, 1200);
   });
 
   return server;

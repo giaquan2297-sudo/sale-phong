@@ -62,6 +62,10 @@ export function useSSE(onNotification) {
       }
     });
 
+    es.addEventListener('system_reload', () => {
+      window.location.reload();
+    });
+
     es.onerror = () => {
       setConnected(false);
     };

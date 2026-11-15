@@ -9,8 +9,8 @@ export function addSseClient(res) {
 
 export function broadcastEvent(eventName, payload = {}) {
   const data = JSON.stringify({
-    ...payload,
     timestamp: new Date().toISOString(),
+    ...payload,
   });
   for (const res of clients) {
     try {
@@ -23,4 +23,9 @@ export function broadcastEvent(eventName, payload = {}) {
 }
 
 export const broadcastSse = broadcastEvent;
+
+export function broadcastReload() {
+  broadcastEvent('system_reload', { reload: true, timestamp: Date.now() });
+}
+
 
