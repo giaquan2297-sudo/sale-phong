@@ -49,7 +49,7 @@ const UNIVERSITY_SUGGESTIONS = [
   'Sư Phạm',
 ];
 
-const BUDGET_QUICK_BUTTONS = ['2.5tr', '3tr', '3.5tr', '4tr', '4.5tr', '5tr', '6tr'];
+const BUDGET_QUICK_BUTTONS = ['3', '3.5', '4', '4.5', '5', '6', '7'];
 
 
 function getEffectiveStatus(status) {
@@ -1092,7 +1092,7 @@ export default function CustomersPage() {
                       type="text"
                       value={form.budget_min}
                       onChange={(e) => setForm((p) => ({ ...p, budget_min: e.target.value }))}
-                      placeholder="VD: 3tr, 3tr5..."
+                      placeholder="VD: 3 hoặc 3.5..."
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums focus:outline-none focus:border-[#0D6E6E]"
                     />
                     {form.budget_min && formatVietnameseBudgetPreview(form.budget_min) ? (
@@ -1125,7 +1125,7 @@ export default function CustomersPage() {
                       type="text"
                       value={form.budget_max}
                       onChange={(e) => setForm((p) => ({ ...p, budget_max: e.target.value }))}
-                      placeholder="VD: 4tr, 4tr5..."
+                      placeholder="VD: 4 hoặc 4.5..."
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums focus:outline-none focus:border-[#0D6E6E]"
                     />
                     {form.budget_max && formatVietnameseBudgetPreview(form.budget_max) ? (
@@ -1196,9 +1196,34 @@ export default function CustomersPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Ngày cần phòng / Dọn vào
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-slate-700">
+                      Thời gian vào ở
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const today = new Date().toISOString().slice(0, 10);
+                          setForm((p) => ({ ...p, target_date: today }));
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
+                      >
+                        Vào ngay
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = new Date();
+                          const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+                          setForm((p) => ({ ...p, target_date: nextMonth.toISOString().slice(0, 10) }));
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
+                      >
+                        Đầu tháng tới
+                      </button>
+                    </div>
+                  </div>
                   <input
                     type="date"
                     value={form.target_date}

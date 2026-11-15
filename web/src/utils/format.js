@@ -123,11 +123,15 @@ export function parseVietnameseCurrency(raw) {
 }
 
 /**
- * Format Vietnamese budget live preview, e.g. '≈ 3.500.000 đ'
+ * Format Vietnamese budget live preview, e.g. '= 4.000.000 đ (4 triệu)'
  */
 export function formatVietnameseBudgetPreview(raw) {
   const val = parseVietnameseCurrency(raw);
   if (!val || val <= 0) return '';
-  return `≈ ${val.toLocaleString('vi-VN')} đ`;
+  const millions = val / 1_000_000;
+  const millionText = Number.isInteger(millions)
+    ? `${millions} triệu`
+    : `${millions.toString().replace('.', ',')} triệu`;
+  return `= ${val.toLocaleString('vi-VN')} đ (${millionText})`;
 }
 
