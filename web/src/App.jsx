@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
 import { AuthProvider } from './context/AuthContext';
 import Layout from './components/Layout';
@@ -19,6 +20,8 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 15_000,
+      gcTime: 10 * 60 * 1000,
+      refetchOnWindowFocus: false,
       retry: 1,
     },
   },
@@ -32,30 +35,34 @@ function PageLoader() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <ToastProvider>
-          <BrowserRouter>
-            <Suspense fallback={<PageLoader />}>
-              <Routes>
-                <Route path="/share/:slug" element={<PublicCartPage />} />
-                <Route path="/nhu-cau" element={<LeadCapturePage />} />
-                <Route path="/dang-ky-tim-phong" element={<LeadCapturePage />} />
-                <Route element={<Layout />}>
-                  <Route path="/" element={<InventoryPage />} />
-                  <Route path="/landlords" element={<LandlordsPage />} />
-                  <Route path="/customers" element={<CustomersPage />} />
-                  <Route path="/commissions" element={<CommissionsPage />} />
-                  <Route path="/sheets" element={<SheetsPage />} />
-                  <Route path="/storage" element={<StoragePage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Route>
-              </Routes>
-            </Suspense>
-          </BrowserRouter>
-        </ToastProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <ToastProvider>
+            <BrowserRouter>
+              <ErrorBoundary>
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    <Route path="/share/:slug" element={<PublicCartPage />} />
+                    <Route path="/nhu-cau" element={<LeadCapturePage />} />
+                    <Route path="/dang-ky-tim-phong" element={<LeadCapturePage />} />
+                    <Route element={<Layout />}>
+                      <Route path="/" element={<InventoryPage />} />
+                      <Route path="/landlords" element={<LandlordsPage />} />
+                      <Route path="/customers" element={<CustomersPage />} />
+                      <Route path="/commissions" element={<CommissionsPage />} />
+                      <Route path="/sheets" element={<SheetsPage />} />
+                      <Route path="/storage" element={<StoragePage />} />
+                      <Route path="/settings" element={<SettingsPage />} />
+                      <Route path="*" element={<Navigate to="/" replace />} />
+                    </Route>
+                  </Routes>
+                </Suspense>
+              </ErrorBoundary>
+            </BrowserRouter>
+          </ToastProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

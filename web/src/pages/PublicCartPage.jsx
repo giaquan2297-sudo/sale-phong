@@ -146,6 +146,8 @@ export default function PublicCartPage() {
                       <img
                         src={images[0].url}
                         alt={`Ảnh 1 phòng ${room.code || room.room_type}`}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200"
                       />
                       <span className="absolute bottom-2 left-2 p-1.5 rounded-md bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity">
@@ -164,6 +166,8 @@ export default function PublicCartPage() {
                           <img
                             src={images[1].url}
                             alt={`Ảnh 2 phòng ${room.code || room.room_type}`}
+                            loading="lazy"
+                            decoding="async"
                             className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-200"
                           />
                         </button>
@@ -178,6 +182,8 @@ export default function PublicCartPage() {
                             <img
                               src={images[2].url}
                               alt={`Ảnh 3 phòng ${room.code || room.room_type}`}
+                              loading="lazy"
+                              decoding="async"
                               className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-200"
                             />
                             {images.length > 3 && (
@@ -409,7 +415,13 @@ export default function PublicCartPage() {
                       : 'border-transparent opacity-55 hover:opacity-90'
                   }`}
                 >
-                  <img src={img.url} alt="" className="w-full h-full object-cover" />
+                  <img
+                    src={img.url}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover"
+                  />
                 </button>
               ))}
             </div>

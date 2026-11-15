@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 import { IMAGES_DIR, ROOT_DIR } from './db.js';
 import { addSseClient } from './services/sse.js';
 import { runImageCleanup } from './services/cleanup.js';
@@ -20,6 +21,125 @@ import leadsRouter from './routes/leads.js';
 
 export function createApp() {
   const app = express();
+
+  // Security & performance headers
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
+
+  // Zero-dependency Gzip compression middleware using 'node:zlib' for responses > 1KB
+  app.use((req, res, next) => {
+    // Skip SSE /api/events and event streams
+    if (
+      req.path === '/api/events' ||
+      req.originalUrl?.startsWith('/api/events') ||
+      req.headers.accept?.includes('text/event-stream')
+    ) {
+      return next();
+    }
+
+    const acceptEncoding = req.headers['accept-encoding'] || '';
+    if (!acceptEncoding.includes('gzip') || req.method === 'HEAD') {
+      return next();
+    }
+
+    const chunks = [];
+    const originalWrite = res.write.bind(res);
+    const originalEnd = res.end.bind(res);
+    let isCanceled = false;
+
+    res.write = function (chunk, encoding, callback) {
+      let cb = callback;
+      let enc = encoding;
+      let data = chunk;
+
+      if (typeof encoding === 'function') {
+        cb = encoding;
+        enc = null;
+      }
+
+      if (isCanceled) {
+        return originalWrite(data, enc, cb);
+      }
+      const contentType = res.getHeader('content-type') || '';
+      if (typeof contentType === 'string' && contentType.includes('text/event-stream')) {
+        isCanceled = true;
+        if (chunks.length > 0) {
+          for (const c of chunks) originalWrite(c);
+          chunks.length = 0;
+        }
+        return originalWrite(data, enc, cb);
+      }
+      if (data) {
+        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data, enc || 'utf8'));
+      }
+      if (typeof cb === 'function') cb();
+      return true;
+    };
+
+    res.end = function (chunk, encoding, callback) {
+      let cb = callback;
+      let enc = encoding;
+      let data = chunk;
+
+      if (typeof chunk === 'function') {
+        cb = chunk;
+        data = null;
+        enc = null;
+      } else if (typeof encoding === 'function') {
+        cb = encoding;
+        enc = null;
+      }
+
+      if (isCanceled) {
+        return originalEnd(data, enc, cb);
+      }
+      const contentType = res.getHeader('content-type') || '';
+      if (typeof contentType === 'string' && contentType.includes('text/event-stream')) {
+        isCanceled = true;
+        if (chunks.length > 0) {
+          for (const c of chunks) originalWrite(c);
+          chunks.length = 0;
+        }
+        return originalEnd(data, enc, cb);
+      }
+
+      if (data) {
+        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data, enc || 'utf8'));
+      }
+
+      const buffer = Buffer.concat(chunks);
+
+      if (
+        res.getHeader('content-encoding') ||
+        res.statusCode === 204 ||
+        res.statusCode === 304 ||
+        buffer.length <= 1024
+      ) {
+        return originalEnd(buffer, cb);
+      }
+
+      try {
+        const gzipped = zlib.gzipSync(buffer);
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Content-Length', gzipped.length);
+        const vary = res.getHeader('Vary');
+        if (!vary) {
+          res.setHeader('Vary', 'Accept-Encoding');
+        } else if (typeof vary === 'string' && !vary.includes('Accept-Encoding')) {
+          res.setHeader('Vary', `${vary}, Accept-Encoding`);
+        }
+        return originalEnd(gzipped, cb);
+      } catch {
+        return originalEnd(buffer, cb);
+      }
+    };
+
+    next();
+  });
 
   app.use(express.json({ limit: '1mb' }));
 
@@ -48,6 +168,7 @@ export function createApp() {
         clearInterval(heartbeat);
       }
     }, 25000);
+    heartbeat.unref?.();
 
     req.on('close', () => {
       clearInterval(heartbeat);
@@ -67,7 +188,14 @@ export function createApp() {
   app.use('/api', leadsRouter);
 
   // Serve uploaded local room images
-  app.use('/images', express.static(IMAGES_DIR, { maxAge: '1h' }));
+  app.use(
+    '/images',
+    express.static(IMAGES_DIR, {
+      setHeaders(res) {
+        res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+      },
+    })
+  );
 
   // API 404 fallback
   app.use('/api', (req, res) => {
@@ -115,12 +243,36 @@ export function createApp() {
   // Serve built React frontend in production
   const webDistDir = path.join(ROOT_DIR, 'web', 'dist');
   if (fs.existsSync(webDistDir)) {
-    app.use(express.static(webDistDir));
+    const assetsDir = path.join(webDistDir, 'assets');
+    if (fs.existsSync(assetsDir)) {
+      app.use(
+        '/assets',
+        express.static(assetsDir, {
+          setHeaders(res) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          },
+        })
+      );
+    }
+
+    app.use(
+      express.static(webDistDir, {
+        setHeaders(res, filePath) {
+          if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        },
+      })
+    );
+
     app.use((req, res, next) => {
       if (req.method !== 'GET' && req.method !== 'HEAD') return next();
       if (req.path.startsWith('/api/') || req.path.startsWith('/images/')) {
         return res.status(404).json({ error: 'Not found' });
       }
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.sendFile('index.html', { root: webDistDir });
     });
   }

@@ -27,6 +27,7 @@ import {
 } from '../utils/constants';
 import { daysAgoText, formatPrice } from '../utils/format';
 import { useToast } from '../components/Toast';
+import RoomCard from '../components/RoomCard';
 import RoomFormModal from '../components/RoomFormModal';
 import RoomDetailDrawer from '../components/RoomDetailDrawer';
 import ZaloSendModal from '../components/ZaloSendModal';
@@ -558,10 +559,12 @@ export default function InventoryPage() {
 
                       <td className="py-2.5 px-2">
                         {room.cover_url ? (
-                          <div className="relative w-11 h-11 rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
+                          <div className="relative w-11 h-11 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0">
                             <img
                               src={room.cover_url}
                               alt=""
+                              loading="lazy"
+                              decoding="async"
                               className="w-full h-full object-cover"
                             />
                             {room.images?.length > 1 && (
@@ -674,100 +677,17 @@ export default function InventoryPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
-          {rooms.map((room) => {
-            const checked = selectedIds.includes(room.id);
-            const st = STATUS_MAP[room.status] || ROOM_STATUSES[0];
-            return (
-              <div
-                key={room.id}
-                onClick={() => setDetailRoomId(room.id)}
-                className={`bg-white rounded-xl border overflow-hidden cursor-pointer transition-shadow hover:shadow-md flex flex-col ${
-                  checked ? 'border-[#0D6E6E] ring-2 ring-[#0D6E6E]/25' : 'border-slate-200'
-                }`}
-              >
-                <div className="relative aspect-[16/10] bg-slate-100">
-                  {room.cover_url ? (
-                    <img src={room.cover_url} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-300">
-                      <ImageIcon className="w-8 h-8" />
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleSelect(room.id);
-                    }}
-                    aria-label={
-                      checked
-                        ? `Bỏ chọn phòng ${room.code || `#${room.id}`}`
-                        : `Chọn phòng ${room.code || `#${room.id}`}`
-                    }
-                    className="absolute top-2.5 left-2.5 p-1 rounded-md bg-white/90 shadow-xs text-slate-700"
-                  >
-                    {checked ? (
-                      <CheckSquare className="w-4 h-4 text-[#0D6E6E]" />
-                    ) : (
-                      <Square className="w-4 h-4" />
-                    )}
-                  </button>
-                  <span
-                    className={`absolute top-2.5 right-2.5 text-[11px] font-medium px-2 py-0.5 rounded-full border ${st.badgeClass}`}
-                  >
-                    {st.label}
-                  </span>
-                  {room.images?.length > 1 && (
-                    <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/65 text-white text-[11px] font-medium tabular-nums">
-                      {room.images.length} ảnh
-                    </span>
-                  )}
-                </div>
-
-                <div className="p-3.5 flex-1 flex flex-col justify-between space-y-2">
-                  <div>
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-base font-bold text-[#0D6E6E] tabular-nums">
-                        {formatPrice(room.price)}
-                      </span>
-                      <span className="text-xs text-slate-500 tabular-nums">
-                        {room.room_type} {room.area_m2 ? `• ${room.area_m2} m²` : ''}
-                      </span>
-                    </div>
-                    <div className="font-semibold text-sm text-slate-900 mt-0.5 line-clamp-1">
-                      {room.code ? `[${room.code}] ` : ''}
-                      {[room.street, room.district].filter(Boolean).join(', ')}
-                    </div>
-                    <p className="text-xs text-slate-500 line-clamp-2 mt-1">
-                      {room.amenities || room.description || 'Chưa có mô tả'}
-                    </p>
-                  </div>
-
-                  <div
-                    className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs gap-1.5"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setLeadCaptureRoom(room)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 font-semibold hover:bg-emerald-100 border border-emerald-200 transition-colors"
-                    >
-                      <Calendar className="w-3 h-3 text-emerald-600" />
-                      <span>Đặt lịch xem</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setZaloRooms([room])}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#0D6E6E]/10 text-[#0D6E6E] font-medium hover:bg-[#0D6E6E]/20"
-                    >
-                      <Send className="w-3 h-3" />
-                      <span>Gửi Zalo</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {rooms.map((room) => (
+            <RoomCard
+              key={room.id}
+              room={room}
+              checked={selectedIds.includes(room.id)}
+              onToggleSelect={toggleSelect}
+              onClick={() => setDetailRoomId(room.id)}
+              onLeadCapture={setLeadCaptureRoom}
+              onSendZalo={(r) => setZaloRooms([r])}
+            />
+          ))}
         </div>
       )}
 

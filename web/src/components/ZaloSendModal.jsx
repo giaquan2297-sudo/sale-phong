@@ -617,6 +617,8 @@ export default function ZaloSendModal({ rooms, onClose }) {
                               <img
                                 src={img.url}
                                 alt={`Ảnh ${idx + 1} phòng ${room.code || room.id}`}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full h-full object-cover"
                               />
                               <button

@@ -21,6 +21,9 @@ const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL;');
 db.exec('PRAGMA foreign_keys = ON;');
 db.exec('PRAGMA busy_timeout = 5000;');
+db.exec('PRAGMA synchronous = NORMAL;');
+db.exec('PRAGMA cache_size = -20000;');
+db.exec('PRAGMA temp_store = MEMORY;');
 
 const migrations = [
   {
@@ -260,6 +263,16 @@ const migrations = [
         CREATE INDEX IF NOT EXISTS idx_customers_urgency ON customers(urgency);
         CREATE INDEX IF NOT EXISTS idx_customers_target_date ON customers(target_date);
         CREATE INDEX IF NOT EXISTS idx_customers_source ON customers(source);
+      `);
+    },
+  },
+  {
+    version: 6,
+    up(database) {
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_rooms_filter ON rooms(status, district, price);
+        CREATE INDEX IF NOT EXISTS idx_customers_filter ON customers(status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_deals_commission_filter ON deals(commission_status, deal_date);
       `);
     },
   },

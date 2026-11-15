@@ -117,6 +117,8 @@ export default function RoomDetailDrawer({
                 <img
                   src={activeImage.url}
                   alt={`Ảnh phòng ${room.code || `#${room.id}`}`}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-contain bg-slate-900/5"
                 />
                 {images.length > 1 && (
@@ -175,7 +177,13 @@ export default function RoomDetailDrawer({
                           : 'border-slate-200 opacity-75 hover:opacity-100'
                       }`}
                     >
-                      <img src={img.url} alt="" className="w-full h-full object-cover" />
+                      <img
+                        src={img.url}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover"
+                      />
                     </button>
                   ))}
                 </div>

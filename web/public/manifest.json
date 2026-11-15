@@ -1,0 +1,31 @@
+{
+  "name": "Sale Trọ — Quản lý phòng & Khách hàng",
+  "short_name": "Sale Trọ",
+  "description": "Quản lý phòng trọ, khách hàng và bảng hàng cho môi giới",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#0D6E6E",
+  "background_color": "#F6F7F9",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
