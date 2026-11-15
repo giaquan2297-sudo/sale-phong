@@ -59,3 +59,75 @@ export function daysAgoText(value) {
   const days = Math.floor(hours / 24);
   return `${days} ngày trước`;
 }
+
+/**
+ * Naturally parse Vietnamese currency strings e.g. '3tr', '3tr5', '4tr2', '3.5tr', '3,5tr', '3500k', '4m', '3.5' (<100 = millions), '3000000'.
+ * Returns integer VND value or null if invalid.
+ */
+export function parseVietnameseCurrency(raw) {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    if (raw < 100) return Math.round(raw * 1_000_000);
+    return Math.round(raw);
+  }
+  let s = String(raw).trim().toLowerCase();
+  if (!s) return null;
+  s = s.replace(/(đ|vnd|dong|đồng)/g, '').trim();
+  s = s.replace(/\s+/g, '');
+  if (!s) return null;
+
+  // Pattern: 3tr, 3tr5, 4tr2, 3.5tr, 3,5tr, 4m, 4m2, 3 triệu, 3 củ
+  const trMatch = s.match(/^(\d+(?:[.,]\d+)?)\s*(?:tr(?:iệu|ieu)?|m|củ|cu)\s*(\d+)?$/);
+  if (trMatch) {
+    const base = parseFloat(trMatch[1].replace(',', '.'));
+    if (!Number.isFinite(base)) return null;
+    if (trMatch[2]) {
+      const frac = parseInt(trMatch[2], 10) / Math.pow(10, trMatch[2].length);
+      return Math.round((base + frac) * 1_000_000);
+    }
+    return Math.round(base * 1_000_000);
+  }
+
+  // Pattern: 3500k, 500k, 3k5
+  const kMatch = s.match(/^(\d+(?:[.,]\d+)?)\s*k\s*(\d+)?$/);
+  if (kMatch) {
+    const base = parseFloat(kMatch[1].replace(',', '.'));
+    if (!Number.isFinite(base)) return null;
+    if (kMatch[2]) {
+      const frac = parseInt(kMatch[2], 10) / Math.pow(10, kMatch[2].length);
+      return Math.round((base + frac) * 1000);
+    }
+    return Math.round(base * 1000);
+  }
+
+  // Standard numbers with thousand separators: 3.000.000, 3,000,000
+  if (/^\d{1,3}(?:[.,]\d{3})+$/.test(s)) {
+    const clean = s.replace(/[.,]/g, '');
+    const val = parseInt(clean, 10);
+    return Number.isFinite(val) && val > 0 ? val : null;
+  }
+
+  // Decimal number or plain integer: e.g. 3.5, 3,5, 4, 3000000
+  const normalized = s.replace(',', '.');
+  if (/^\d+(?:\.\d+)?$/.test(normalized)) {
+    const val = parseFloat(normalized);
+    if (!Number.isFinite(val) || val <= 0) return null;
+    if (val < 100) {
+      return Math.round(val * 1_000_000);
+    }
+    return Math.round(val);
+  }
+
+  return null;
+}
+
+/**
+ * Format Vietnamese budget live preview, e.g. '≈ 3.500.000 đ'
+ */
+export function formatVietnameseBudgetPreview(raw) {
+  const val = parseVietnameseCurrency(raw);
+  if (!val || val <= 0) return '';
+  return `≈ ${val.toLocaleString('vi-VN')} đ`;
+}
+

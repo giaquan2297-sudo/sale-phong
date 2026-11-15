@@ -116,6 +116,7 @@ export function enrichCustomer(customer, todayStr = null) {
     urgency: customer.urgency || 'binh_thuong',
     target_date: targetDate,
     source: customer.source || 'manual',
+    university: customer.university || '',
     days_until_target: daysUntilTarget,
     is_urgent: isUrgent,
     needs_followup_reminder: needsFollowupReminder,

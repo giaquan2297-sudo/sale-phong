@@ -8,6 +8,7 @@ import {
   parseOptionalNonNegativeFloat,
   parseOptionalNonNegativeInt,
   parsePositiveIntId,
+  parseVietnameseCurrency,
   safeTrim,
 } from '../utils/validation.js';
 import { enrichCustomer, normalizeTargetDate } from '../utils/customerUtils.js';
@@ -258,9 +259,9 @@ router.get('/customers', (req, res) => {
     params.push(source);
   }
   if (q && safeTrim(q)) {
-    conditions.push('(c.name LIKE ? OR c.zalo_phone LIKE ? OR c.districts LIKE ?)');
+    conditions.push('(c.name LIKE ? OR c.zalo_phone LIKE ? OR c.districts LIKE ? OR c.university LIKE ?)');
     const term = `%${safeTrim(q)}%`;
-    params.push(term, term, term);
+    params.push(term, term, term, term);
   }
   if (conditions.length > 0) {
     sql += ` WHERE ` + conditions.join(' AND ');
@@ -342,11 +343,11 @@ router.post('/customers', (req, res) => {
     return res.status(400).json({ error: 'Tên khách hàng không được để trống' });
   }
 
-  const budgetMinRes = parseOptionalNonNegativeInt(b.budget_min, null);
+  const budgetMinRes = parseVietnameseCurrency(b.budget_min, null);
   if (!budgetMinRes.ok) {
     return res.status(400).json({ error: 'Ngân sách tối thiểu không hợp lệ' });
   }
-  const budgetMaxRes = parseOptionalNonNegativeInt(b.budget_max, null);
+  const budgetMaxRes = parseVietnameseCurrency(b.budget_max, null);
   if (!budgetMaxRes.ok) {
     return res.status(400).json({ error: 'Ngân sách tối đa không hợp lệ' });
   }
@@ -366,13 +367,14 @@ router.post('/customers', (req, res) => {
     b.target_date !== undefined ? b.target_date : b.move_in_date
   );
   const source = safeTrim(b.source) || 'manual';
+  const university = safeTrim(b.university);
 
   const result = db
     .prepare(
       `
       INSERT INTO customers (
-        name, zalo_phone, budget_min, budget_max, districts, need_note, status, urgency, target_date, source, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+        name, zalo_phone, budget_min, budget_max, districts, need_note, status, urgency, target_date, source, university, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `
     )
     .run(
@@ -385,7 +387,8 @@ router.post('/customers', (req, res) => {
       status,
       urgency,
       targetDate,
-      source
+      source,
+      university
     );
 
   const customerId = result.lastInsertRowid;
@@ -419,7 +422,7 @@ function handleUpdateCustomer(req, res) {
 
   const budgetMinRes =
     b.budget_min !== undefined
-      ? parseOptionalNonNegativeInt(b.budget_min, null)
+      ? parseVietnameseCurrency(b.budget_min, null)
       : { ok: true, value: existing.budget_min };
   if (!budgetMinRes.ok) {
     return res.status(400).json({ error: 'Ngân sách tối thiểu không hợp lệ' });
@@ -427,7 +430,7 @@ function handleUpdateCustomer(req, res) {
 
   const budgetMaxRes =
     b.budget_max !== undefined
-      ? parseOptionalNonNegativeInt(b.budget_max, null)
+      ? parseVietnameseCurrency(b.budget_max, null)
       : { ok: true, value: existing.budget_max };
   if (!budgetMaxRes.ok) {
     return res.status(400).json({ error: 'Ngân sách tối đa không hợp lệ' });
@@ -458,6 +461,11 @@ function handleUpdateCustomer(req, res) {
     source = safeTrim(b.source);
   }
 
+  let university = existing.university || '';
+  if (b.university !== undefined) {
+    university = safeTrim(b.university);
+  }
+
   db.prepare(
     `
     UPDATE customers SET
@@ -471,6 +479,7 @@ function handleUpdateCustomer(req, res) {
       urgency = ?,
       target_date = ?,
       source = ?,
+      university = ?,
       updated_at = datetime('now', 'localtime')
     WHERE id = ?
   `
@@ -487,6 +496,7 @@ function handleUpdateCustomer(req, res) {
     urgency,
     targetDate,
     source,
+    university,
     existing.id
   );
 

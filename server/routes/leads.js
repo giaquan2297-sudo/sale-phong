@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import { broadcastEvent, broadcastSse } from '../services/sse.js';
 import { enrichCustomer, normalizeTargetDate } from '../utils/customerUtils.js';
+import { parseVietnameseCurrency } from '../utils/validation.js';
 
 const router = express.Router();
 
@@ -28,6 +29,7 @@ function handleCreateLead(req, res) {
     room_id,
     room_code,
     address,
+    university,
   } = req.body || {};
 
   const cleanName = String(name || '').trim();
@@ -54,19 +56,16 @@ function handleCreateLead(req, res) {
     }
   }
 
-  const parsedBudgetMin =
-    budget_min !== undefined && budget_min !== null && budget_min !== ''
-      ? parseInt(budget_min, 10) || null
-      : null;
+  const minRes = parseVietnameseCurrency(budget_min, null);
+  const parsedBudgetMin = minRes.ok && minRes.value !== 0 ? minRes.value : null;
 
   const rawBudgetMax =
     budget_max !== undefined && budget_max !== null && budget_max !== '' ? budget_max : budget;
-  const parsedBudgetMax =
-    rawBudgetMax !== undefined && rawBudgetMax !== null && rawBudgetMax !== ''
-      ? parseInt(rawBudgetMax, 10) || null
-      : null;
+  const maxRes = parseVietnameseCurrency(rawBudgetMax, null);
+  const parsedBudgetMax = maxRes.ok && maxRes.value !== 0 ? maxRes.value : null;
 
   const cleanDistricts = String(districts || district || '').trim();
+  const cleanUniversity = String(university || '').trim();
 
   const rawMoveInDate = move_in_date
     ? String(move_in_date).trim()
@@ -97,8 +96,8 @@ function handleCreateLead(req, res) {
 
   const stmt = db.prepare(`
     INSERT INTO customers (
-      name, zalo_phone, status, budget_min, budget_max, districts, need_note, urgency, target_date, source, created_at, updated_at
-    ) VALUES (?, ?, 'chua_cham', ?, ?, ?, ?, ?, ?, 'web_form', datetime('now', 'localtime'), datetime('now', 'localtime'))
+      name, zalo_phone, status, budget_min, budget_max, districts, need_note, urgency, target_date, source, university, created_at, updated_at
+    ) VALUES (?, ?, 'chua_cham', ?, ?, ?, ?, ?, ?, 'web_form', ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
   `);
 
   const result = stmt.run(
@@ -109,7 +108,8 @@ function handleCreateLead(req, res) {
     cleanDistricts,
     finalNeedNote,
     finalUrgency,
-    cleanTargetDate
+    cleanTargetDate,
+    cleanUniversity
   );
   const customerId = Number(result.lastInsertRowid);
 

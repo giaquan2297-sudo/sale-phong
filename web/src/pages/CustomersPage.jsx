@@ -23,13 +23,34 @@ import {
   Bell,
   Copy,
   Check,
+  GraduationCap,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { CUSTOMER_STATUSES, CUSTOMER_STATUS_MAP, STATUS_MAP } from '../utils/constants';
-import { formatDateTime, formatPrice, formatVND } from '../utils/format';
+import {
+  formatDateTime,
+  formatPrice,
+  formatVND,
+  parseVietnameseCurrency,
+  formatVietnameseBudgetPreview,
+} from '../utils/format';
 import { useToast } from '../components/Toast';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import DealClosingModal from '../components/DealClosingModal';
+
+const UNIVERSITY_SUGGESTIONS = [
+  'ĐH Bách Khoa',
+  'Kinh Tế Quốc Dân',
+  'ĐHQG Hà Nội',
+  'Ngoại Thương',
+  'Thương Mại',
+  'Xây Dựng',
+  'Bưu Chính',
+  'Sư Phạm',
+];
+
+const BUDGET_QUICK_BUTTONS = ['2.5tr', '3tr', '3.5tr', '4tr', '4.5tr', '5tr', '6tr'];
+
 
 function getEffectiveStatus(status) {
   if (status === 'da_chot' || status === 'da_thue') return 'da_chot';
@@ -120,6 +141,7 @@ export default function CustomersPage() {
   const [form, setForm] = useState({
     name: '',
     zalo_phone: '',
+    university: '',
     budget_min: '',
     budget_max: '',
     districts: '',
@@ -185,7 +207,8 @@ export default function CustomersPage() {
         const matchesPhone = c.zalo_phone && c.zalo_phone.toLowerCase().includes(q);
         const matchesDistrict = c.districts && c.districts.toLowerCase().includes(q);
         const matchesNote = c.need_note && c.need_note.toLowerCase().includes(q);
-        if (!matchesName && !matchesPhone && !matchesDistrict && !matchesNote) return false;
+        const matchesUniversity = c.university && c.university.toLowerCase().includes(q);
+        if (!matchesName && !matchesPhone && !matchesDistrict && !matchesNote && !matchesUniversity) return false;
       }
       return true;
     });
@@ -219,6 +242,7 @@ export default function CustomersPage() {
     setForm({
       name: '',
       zalo_phone: '',
+      university: '',
       budget_min: '',
       budget_max: '',
       districts: '',
@@ -247,6 +271,7 @@ export default function CustomersPage() {
     setForm({
       name: c.name || '',
       zalo_phone: c.zalo_phone || '',
+      university: c.university || '',
       budget_min: c.budget_min ? String(c.budget_min) : '',
       budget_max: c.budget_max ? String(c.budget_max) : '',
       districts: c.districts || '',
@@ -292,8 +317,9 @@ export default function CustomersPage() {
       const payload = {
         name: form.name.trim(),
         zalo_phone: form.zalo_phone.trim(),
-        budget_min: form.budget_min ? parseInt(form.budget_min, 10) : null,
-        budget_max: form.budget_max ? parseInt(form.budget_max, 10) : null,
+        university: form.university ? form.university.trim() : '',
+        budget_min: form.budget_min ? parseVietnameseCurrency(form.budget_min) : null,
+        budget_max: form.budget_max ? parseVietnameseCurrency(form.budget_max) : null,
         districts: form.districts.trim(),
         need_note: form.need_note.trim(),
         status: form.status,
@@ -609,6 +635,11 @@ export default function CustomersPage() {
                           <span className="font-semibold text-sm text-slate-900 truncate">
                             {c.name}
                           </span>
+                          {c.university && (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-blue-50 text-blue-700 border border-blue-200 font-medium inline-flex items-center gap-1">
+                              <span>🎓 {c.university}</span>
+                            </span>
+                          )}
                           {c.source === 'web_form' && (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-medium">
                               🌐 Web
@@ -717,6 +748,11 @@ export default function CustomersPage() {
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-bold text-lg text-slate-900">{activeCustomer.name}</h3>
+                    {activeCustomer.university && (
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-medium inline-flex items-center gap-1">
+                        <span>🎓 {activeCustomer.university}</span>
+                      </span>
+                    )}
                     {activeCustomer.source === 'web_form' && (
                       <span className="text-[11px] px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-medium">
                         🌐 Web Form
@@ -742,6 +778,15 @@ export default function CustomersPage() {
                       <Phone className="w-3 h-3 text-slate-400" />
                       <span>{activeCustomer.zalo_phone || 'Chưa có SĐT'}</span>
                     </span>
+                    {activeCustomer.university && (
+                      <>
+                        <span>•</span>
+                        <span className="flex items-center gap-1 text-blue-700 font-medium">
+                          <GraduationCap className="w-3.5 h-3.5 text-blue-600" />
+                          <span>{activeCustomer.university}</span>
+                        </span>
+                      </>
+                    )}
                     <span>•</span>
                     <span>Khu vực: {activeCustomer.districts || 'Chưa chọn'}</span>
                     <span>•</span>
@@ -1005,44 +1050,106 @@ export default function CustomersPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Ngân sách từ (VND){' '}
-                    {form.budget_min ? (
-                      <span className="text-[#0D6E6E] font-semibold">
-                        ({formatPrice(form.budget_min)})
-                      </span>
-                    ) : null}
-                  </label>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1 flex items-center gap-1.5">
+                  <GraduationCap className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Trường học / Nơi làm việc</span>
+                </label>
+                <div className="relative">
                   <input
-                    type="number"
-                    min="0"
-                    step="100000"
-                    value={form.budget_min}
-                    onChange={(e) => setForm((p) => ({ ...p, budget_min: e.target.value }))}
-                    placeholder="3000000"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums focus:outline-none focus:border-[#0D6E6E]"
+                    type="text"
+                    value={form.university}
+                    onChange={(e) => setForm((p) => ({ ...p, university: e.target.value }))}
+                    placeholder="VD: ĐH Bách Khoa, Kinh Tế Quốc Dân..."
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:border-[#0D6E6E]"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Đến tối đa (VND){' '}
-                    {form.budget_max ? (
-                      <span className="text-[#0D6E6E] font-semibold">
-                        ({formatPrice(form.budget_max)})
-                      </span>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {UNIVERSITY_SUGGESTIONS.map((uni) => (
+                    <button
+                      key={uni}
+                      type="button"
+                      onClick={() => setForm((p) => ({ ...p, university: uni }))}
+                      className={`text-[11px] px-2 py-0.5 rounded-md border transition-colors ${
+                        form.university === uni
+                          ? 'bg-blue-100 text-blue-800 border-blue-300 font-semibold shadow-2xs'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {uni}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Ngân sách từ (VND)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.budget_min}
+                      onChange={(e) => setForm((p) => ({ ...p, budget_min: e.target.value }))}
+                      placeholder="VD: 3tr, 3tr5..."
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums focus:outline-none focus:border-[#0D6E6E]"
+                    />
+                    {form.budget_min && formatVietnameseBudgetPreview(form.budget_min) ? (
+                      <div className="text-[11px] text-emerald-700 font-semibold mt-1">
+                        {formatVietnameseBudgetPreview(form.budget_min)}
+                      </div>
                     ) : null}
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="100000"
-                    value={form.budget_max}
-                    onChange={(e) => setForm((p) => ({ ...p, budget_max: e.target.value }))}
-                    placeholder="4500000"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums focus:outline-none focus:border-[#0D6E6E]"
-                  />
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {BUDGET_QUICK_BUTTONS.map((b) => (
+                        <button
+                          key={b}
+                          type="button"
+                          onClick={() => setForm((p) => ({ ...p, budget_min: b }))}
+                          className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                            form.budget_min === b
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold shadow-2xs'
+                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {b}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Đến tối đa (VND)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.budget_max}
+                      onChange={(e) => setForm((p) => ({ ...p, budget_max: e.target.value }))}
+                      placeholder="VD: 4tr, 4tr5..."
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm tabular-nums focus:outline-none focus:border-[#0D6E6E]"
+                    />
+                    {form.budget_max && formatVietnameseBudgetPreview(form.budget_max) ? (
+                      <div className="text-[11px] text-emerald-700 font-semibold mt-1">
+                        {formatVietnameseBudgetPreview(form.budget_max)}
+                      </div>
+                    ) : null}
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {BUDGET_QUICK_BUTTONS.map((b) => (
+                        <button
+                          key={b}
+                          type="button"
+                          onClick={() => setForm((p) => ({ ...p, budget_max: b }))}
+                          className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                            form.budget_max === b
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold shadow-2xs'
+                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {b}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
 

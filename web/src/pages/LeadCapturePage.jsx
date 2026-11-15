@@ -17,9 +17,14 @@ import {
   Loader2,
   RotateCcw,
   Share2,
+  GraduationCap,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { formatPrice } from '../utils/format';
+import {
+  formatPrice,
+  parseVietnameseCurrency,
+  formatVietnameseBudgetPreview,
+} from '../utils/format';
 import { useToast } from '../components/Toast';
 import LeadFormShareModal from '../components/LeadFormShareModal';
 
@@ -83,6 +88,7 @@ export default function LeadCapturePage() {
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [university, setUniversity] = useState('');
   const [selectedDistricts, setSelectedDistricts] = useState(['Cầu Giấy']);
   const [selectedBudgetPreset, setSelectedBudgetPreset] = useState('3_to_5');
   const [budgetMin, setBudgetMin] = useState('3000000');
@@ -127,15 +133,19 @@ export default function LeadCapturePage() {
     setError('');
     setLoading(true);
 
+    const parsedMin = budgetMin ? parseVietnameseCurrency(budgetMin) : null;
+    const parsedMax = budgetMax ? parseVietnameseCurrency(budgetMax) : null;
+
     const payload = {
       name: name.trim(),
       phone: phone.trim(),
       zalo_phone: phone.trim(),
+      university: university.trim(),
       districts: selectedDistricts.join(', '),
       district: selectedDistricts.join(', '),
-      budget_min: budgetMin ? parseInt(budgetMin, 10) : null,
-      budget_max: budgetMax ? parseInt(budgetMax, 10) : null,
-      budget: budgetMax ? parseInt(budgetMax, 10) : null,
+      budget_min: parsedMin,
+      budget_max: parsedMax,
+      budget: parsedMax,
       urgency,
       target_date: targetDate,
       move_in_date: targetDate,
@@ -161,6 +171,7 @@ export default function LeadCapturePage() {
   const handleReset = () => {
     setName('');
     setPhone('');
+    setUniversity('');
     setSelectedDistricts(['Cầu Giấy']);
     setSelectedBudgetPreset('3_to_5');
     setBudgetMin('3000000');
@@ -313,6 +324,13 @@ export default function LeadCapturePage() {
                 </span>
               </div>
 
+              {submittedData.university && (
+                <div>
+                  <span className="text-slate-400">Trường/Nơi làm việc:</span>{' '}
+                  <span className="font-semibold text-blue-700">🎓 {submittedData.university}</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2 text-slate-600">
                 <div>
                   <span className="text-slate-400">Ngân sách:</span>{' '}
@@ -416,6 +434,48 @@ export default function LeadCapturePage() {
                     Chuyên viên sẽ gửi danh sách phòng kèm ảnh qua Zalo số này
                   </p>
                 </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <GraduationCap className="w-4 h-4 text-blue-600" />
+                    <span>Trường học hoặc Nơi làm việc (nếu có)</span>
+                  </label>
+                  <div className="relative">
+                    <GraduationCap className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Ví dụ: ĐH Bách Khoa, Kinh Tế Quốc Dân, FPT, Viettel..."
+                      value={university}
+                      onChange={(e) => setUniversity(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0D6E6E]/20 focus:border-[#0D6E6E] transition-all"
+                    />
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {[
+                      'ĐH Bách Khoa',
+                      'Kinh Tế Quốc Dân',
+                      'ĐHQG Hà Nội',
+                      'Ngoại Thương',
+                      'Thương Mại',
+                      'Xây Dựng',
+                      'Bưu Chính',
+                      'Sư Phạm',
+                    ].map((uni) => (
+                      <button
+                        key={uni}
+                        type="button"
+                        onClick={() => setUniversity(uni)}
+                        className={`text-[11px] px-2 py-0.5 rounded-md border transition-colors ${
+                          university === uni
+                            ? 'bg-blue-100 text-blue-800 border-blue-300 font-semibold shadow-2xs'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {uni}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -486,10 +546,8 @@ export default function LeadCapturePage() {
                     Giá tối thiểu (VND)
                   </label>
                   <input
-                    type="number"
-                    min="0"
-                    step="500000"
-                    placeholder="VD: 3000000"
+                    type="text"
+                    placeholder="VD: 3tr, 3tr5, 3000000"
                     value={budgetMin}
                     onChange={(e) => {
                       setBudgetMin(e.target.value);
@@ -497,9 +555,9 @@ export default function LeadCapturePage() {
                     }}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm tabular-nums focus:outline-none focus:border-[#0D6E6E]"
                   />
-                  {budgetMin ? (
-                    <span className="text-[11px] text-emerald-700 font-medium">
-                      {formatPrice(budgetMin)}
+                  {budgetMin && formatVietnameseBudgetPreview(budgetMin) ? (
+                    <span className="text-[11px] text-emerald-700 font-semibold block mt-1">
+                      {formatVietnameseBudgetPreview(budgetMin)}
                     </span>
                   ) : null}
                 </div>
@@ -509,10 +567,8 @@ export default function LeadCapturePage() {
                     Giá tối đa (VND)
                   </label>
                   <input
-                    type="number"
-                    min="0"
-                    step="500000"
-                    placeholder="VD: 5000000"
+                    type="text"
+                    placeholder="VD: 5tr, 5tr5, 5000000"
                     value={budgetMax}
                     onChange={(e) => {
                       setBudgetMax(e.target.value);
@@ -520,9 +576,9 @@ export default function LeadCapturePage() {
                     }}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm tabular-nums focus:outline-none focus:border-[#0D6E6E]"
                   />
-                  {budgetMax ? (
-                    <span className="text-[11px] text-emerald-700 font-medium">
-                      {formatPrice(budgetMax)}
+                  {budgetMax && formatVietnameseBudgetPreview(budgetMax) ? (
+                    <span className="text-[11px] text-emerald-700 font-semibold block mt-1">
+                      {formatVietnameseBudgetPreview(budgetMax)}
                     </span>
                   ) : null}
                 </div>

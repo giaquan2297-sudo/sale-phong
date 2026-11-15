@@ -276,6 +276,23 @@ const migrations = [
       `);
     },
   },
+  {
+    version: 7,
+    up(database) {
+      const customerCols = database
+        .prepare('PRAGMA table_info(customers)')
+        .all()
+        .map((c) => c.name);
+
+      if (!customerCols.includes('university')) {
+        database.exec(`ALTER TABLE customers ADD COLUMN university TEXT DEFAULT ''`);
+      }
+
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_customers_university ON customers(university);
+      `);
+    },
+  },
 ];
 
 function runMigrations() {
