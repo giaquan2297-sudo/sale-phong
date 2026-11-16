@@ -1,6 +1,2 @@
-# Proxy API and uploaded image requests to the backend server
-/api/* https://sale-tro-hanoi.onrender.com/api/:splat 200
-/images/* https://sale-tro-hanoi.onrender.com/images/:splat 200
-
 # Single Page Application (SPA) fallback
 /* /index.html 200
