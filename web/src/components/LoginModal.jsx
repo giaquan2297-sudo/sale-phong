@@ -142,12 +142,12 @@ export default function LoginModal({ isOpen, onClose }) {
             <button
               type="button"
               disabled={loading}
-              onClick={() => handleQuickLogin('sale', 'sale123', 'Môi giới')}
+              onClick={() => handleQuickLogin('sale', 'sale123', 'Môi giới Sale')}
               className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-blue-50 text-blue-800 border border-blue-200 hover:bg-blue-100 transition-colors shadow-xs active:scale-[0.98]"
             >
               <Briefcase className="w-4 h-4 text-blue-600 shrink-0" />
               <div className="text-left">
-                <div className="font-semibold leading-tight">Môi giới</div>
+                <div className="font-semibold leading-tight">Sale (Phân quyền)</div>
                 <div className="text-[10px] text-blue-600">sale / sale123</div>
               </div>
             </button>

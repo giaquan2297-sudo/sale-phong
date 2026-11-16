@@ -5,6 +5,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
 import { AuthProvider } from './context/AuthContext';
 import Layout from './components/Layout';
+import AdminRoute from './components/AdminRoute';
+import AuthenticatedRoute from './components/AuthenticatedRoute';
 import InventoryPage from './pages/InventoryPage';
 
 const LandlordsPage = lazy(() => import('./pages/LandlordsPage'));
@@ -48,12 +50,54 @@ export default function App() {
                     <Route path="/dang-ky-tim-phong" element={<LeadCapturePage />} />
                     <Route element={<Layout />}>
                       <Route path="/" element={<InventoryPage />} />
-                      <Route path="/landlords" element={<LandlordsPage />} />
-                      <Route path="/customers" element={<CustomersPage />} />
-                      <Route path="/commissions" element={<CommissionsPage />} />
-                      <Route path="/sheets" element={<SheetsPage />} />
-                      <Route path="/storage" element={<StoragePage />} />
-                      <Route path="/settings" element={<SettingsPage />} />
+                      <Route
+                        path="/customers"
+                        element={
+                          <AuthenticatedRoute>
+                            <CustomersPage />
+                          </AuthenticatedRoute>
+                        }
+                      />
+                      <Route
+                        path="/landlords"
+                        element={
+                          <AdminRoute>
+                            <LandlordsPage />
+                          </AdminRoute>
+                        }
+                      />
+                      <Route
+                        path="/commissions"
+                        element={
+                          <AdminRoute>
+                            <CommissionsPage />
+                          </AdminRoute>
+                        }
+                      />
+                      <Route
+                        path="/sheets"
+                        element={
+                          <AdminRoute>
+                            <SheetsPage />
+                          </AdminRoute>
+                        }
+                      />
+                      <Route
+                        path="/storage"
+                        element={
+                          <AdminRoute>
+                            <StoragePage />
+                          </AdminRoute>
+                        }
+                      />
+                      <Route
+                        path="/settings"
+                        element={
+                          <AdminRoute>
+                            <SettingsPage />
+                          </AdminRoute>
+                        }
+                      />
                       <Route path="*" element={<Navigate to="/" replace />} />
                     </Route>
                   </Routes>

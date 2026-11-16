@@ -36,21 +36,20 @@ export default function Layout() {
   if (isAdmin) {
     navItems = [
       { to: '/', label: 'Bảng hàng', icon: Building2, end: true },
+      { to: '/customers', label: 'Bảng khách hàng', icon: UserCheck },
       { to: '/nhu-cau', label: 'Biểu mẫu gửi khách', icon: ClipboardList },
       { to: '/landlords', label: 'Chủ nhà', icon: Users },
-      { to: '/customers', label: 'Khách hàng', icon: UserCheck },
       { to: '/commissions', label: 'Bảng hoa hồng', icon: CircleDollarSign },
       { to: '/sheets', label: 'Google Sheet', icon: FileSpreadsheet },
       { to: '/storage', label: 'Dung lượng', icon: HardDrive },
       { to: '/settings', label: 'Cài đặt', icon: Settings },
     ];
   } else if (isUser) {
+    // Tài khoản Sale / Môi giới: CHỈ nhìn thấy Bảng hàng, Bảng khách hàng, Biểu mẫu gửi khách
     navItems = [
       { to: '/', label: 'Bảng hàng', icon: Building2, end: true },
+      { to: '/customers', label: 'Bảng khách hàng', icon: UserCheck },
       { to: '/nhu-cau', label: 'Biểu mẫu gửi khách', icon: ClipboardList },
-      { to: '/customers', label: 'Khách hàng', icon: UserCheck },
-      { to: '/commissions', label: 'Bảng hoa hồng', icon: CircleDollarSign },
-      { to: '/storage', label: 'Dung lượng', icon: HardDrive },
     ];
   } else {
     // Guest
@@ -227,13 +226,15 @@ export default function Layout() {
             )}
             <span>{sseConnected ? 'Cập nhật trực tiếp (SSE)' : 'Đang kết nối lại...'}</span>
           </div>
-          <NavLink
-            to="/settings"
-            className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors font-medium"
-          >
-            <Smartphone className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
-            <span>Mở trên điện thoại</span>
-          </NavLink>
+          {isAdmin && (
+            <NavLink
+              to="/settings"
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors font-medium"
+            >
+              <Smartphone className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+              <span>Mở trên điện thoại (Cài đặt)</span>
+            </NavLink>
+          )}
         </div>
       </aside>
 

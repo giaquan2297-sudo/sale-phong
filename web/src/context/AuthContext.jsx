@@ -104,7 +104,8 @@ export function AuthProvider({ children }) {
   const closeLoginModal = useCallback(() => setIsLoginModalOpen(false), []);
 
   const isAdmin = Boolean(user && user.role === 'admin');
-  const isUser = Boolean(user && user.role === 'user');
+  const isSale = Boolean(user && (user.role === 'user' || user.role === 'sale'));
+  const isUser = isSale;
   const isGuest = !user;
 
   const value = useMemo(
@@ -116,13 +117,14 @@ export function AuthProvider({ children }) {
       logout,
       register,
       isAdmin,
+      isSale,
       isUser,
       isGuest,
       isLoginModalOpen,
       openLoginModal,
       closeLoginModal,
     }),
-    [user, token, isLoading, login, logout, register, isAdmin, isUser, isGuest, isLoginModalOpen, openLoginModal, closeLoginModal]
+    [user, token, isLoading, login, logout, register, isAdmin, isSale, isUser, isGuest, isLoginModalOpen, openLoginModal, closeLoginModal]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
