@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { google } from 'googleapis';
 import db, { GOOGLE_KEY_PATH, IMAGES_DIR, getAllSettings } from '../db.js';
-import { parsePrice } from './parsePrice.js';
+import { parsePrice, parseDeposit } from './parsePrice.js';
 import { broadcastEvent } from './sse.js';
 import {
   detectHeaderRow,
@@ -11,6 +11,7 @@ import {
   HEADER_KEYWORDS,
   cleanNormalizeText,
   tryGsheetsCliRead,
+  extractUtilitiesAndAmenities,
 } from './autoDetectSheet.js';
 import {
   extractDriveFolderId,
@@ -120,6 +121,13 @@ function normalizeStatus(rawValue, statusRules = {}) {
     if (pattern && text.includes(pattern.toLowerCase())) {
       return targetStatus;
     }
+  }
+
+  // Future availability or move-out date means it is preparing to be vacant ("sap_trong")
+  if (
+    /(?:\d{1,2}\/\d{1,2}|trống từ|ra ngày|hết hạn|cuối tháng|đầu tháng|chuẩn bị ra|sắp ra|ở đến)/i.test(text)
+  ) {
+    return 'sap_trong';
   }
 
   if (
@@ -410,6 +418,9 @@ export async function syncSheetSource(sourceId, options = {}) {
     }
 
     let currentBuilding = { name: '', address: '', mapLink: '' };
+    let lastKnownAddress = '';
+    let lastKnownStreet = '';
+    let lastKnownDistrict = '';
     const seenRowKeys = new Set();
     const selectExisting = db.prepare(
       'SELECT * FROM rooms WHERE sheet_source_id = ? AND sheet_row_key = ?'
@@ -507,6 +518,8 @@ export async function syncSheetSource(sourceId, options = {}) {
           address: (bAddrCell || row[7] || currentBuilding.address || '').trim(),
           mapLink: (bMapCell || '').trim(),
         };
+        lastKnownAddress = currentBuilding.address;
+        lastKnownStreet = currentBuilding.name;
         continue;
       }
 
@@ -528,15 +541,32 @@ export async function syncSheetSource(sourceId, options = {}) {
       if (!rawAddress && currentBuilding.address) {
         rawAddress = currentBuilding.address;
       }
+      // Forward-fill merged address if available
+      if (!rawAddress && lastKnownAddress) {
+        rawAddress = lastKnownAddress;
+      } else if (rawAddress) {
+        lastKnownAddress = rawAddress;
+      }
+
       if (!rawStreet) {
         rawStreet = currentBuilding.name
           ? (rawAddress ? `${currentBuilding.name} - ${rawAddress}` : currentBuilding.name)
           : (rawAddress || currentBuilding.name || '');
       }
+      if (!rawStreet && lastKnownStreet) {
+        rawStreet = lastKnownStreet;
+      } else if (rawStreet) {
+        lastKnownStreet = rawStreet;
+      }
 
       let rawDistrict = String(
         resolveCellValue(row, activeHeaders, activeColumnMap.district) || (col0 === '0' ? row[3] : '') || ''
       ).trim();
+      if (!rawDistrict && lastKnownDistrict) {
+        rawDistrict = lastKnownDistrict;
+      } else if (rawDistrict) {
+        lastKnownDistrict = rawDistrict;
+      }
 
       const rawPrice = resolveCellValue(row, activeHeaders, activeColumnMap.price) || (col0 === '0' ? row[7] : '');
       const rawDeposit = resolveCellValue(row, activeHeaders, activeColumnMap.deposit) || (col0 === '0' ? row[5] : '');
@@ -604,9 +634,37 @@ export async function syncSheetSource(sourceId, options = {}) {
       }
       seenRowKeys.add(sheetRowKey);
 
-      const deposit = parsePrice(rawDeposit) || price;
+      const deposit = parseDeposit(rawDeposit, price) || price;
       const areaM2 = parseAreaM2(rawArea);
       const status = normalizeStatus(rawStatus, statusRules);
+
+      // Smart move-in date extraction from status string
+      let availableFrom = rawAvailableFrom;
+      if (!availableFrom && rawStatus && status === 'sap_trong') {
+        const dateMatch = String(rawStatus).match(/(?:\b(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)\b|cuối tháng|đầu tháng)/i);
+        if (dateMatch) {
+          availableFrom = dateMatch[0];
+        }
+      }
+
+      // Free-text extraction fallback for electric/water & abbreviations
+      let electricPrice = rawElectric;
+      let waterPrice = rawWater;
+      let amenities = rawAmenities;
+      if (!electricPrice || !waterPrice || (!amenities || amenities.length < 5)) {
+        const extracted = extractUtilitiesAndAmenities(`${rawDesc} ${rawAmenities} ${rawType}`);
+        if (!electricPrice && extracted.electric) {
+          electricPrice = extracted.electric;
+        }
+        if (!waterPrice && extracted.water) {
+          waterPrice = extracted.water;
+        }
+        if ((!amenities || amenities.length < 5) && extracted.decodedAmenities.length > 0) {
+          amenities = amenities
+            ? `${amenities}, ${extracted.decodedAmenities.join(', ')}`
+            : extracted.decodedAmenities.join(', ');
+        }
+      }
 
       const existing = selectExisting.get(source.id, sheetRowKey);
       let roomId;
@@ -622,11 +680,11 @@ export async function syncSheetSource(sourceId, options = {}) {
           deposit,
           areaM2,
           rawType,
-          rawAmenities,
-          rawElectric,
-          rawWater,
+          amenities,
+          electricPrice,
+          waterPrice,
           status,
-          rawAvailableFrom,
+          availableFrom,
           rawDesc,
           privateNote,
           source.id,
@@ -646,11 +704,11 @@ export async function syncSheetSource(sourceId, options = {}) {
           deposit || existing.deposit,
           areaM2 ?? existing.area_m2,
           rawType || existing.room_type,
-          rawAmenities,
-          rawElectric,
-          rawWater,
+          amenities,
+          electricPrice,
+          waterPrice,
           status,
-          rawAvailableFrom,
+          availableFrom,
           rawDesc,
           privateNote,
           privateNote,

@@ -56,22 +56,60 @@ export const HEADER_KEYWORDS = [
 ];
 
 export const FIELD_SYNONYMS = {
-  code: ['mã phòng', 'phòng', 'mã căn', 'số phòng', 'căn', 'stt', 'mã'],
-  street: ['đường', 'tòa nhà', 'địa chỉ', 'khu vực', 'tên tòa', 'phố', 'vị trí'],
-  address: ['số nhà', 'địa chỉ cụ thể', 'ngõ', 'ngách'],
+  code: ['mã phòng', 'phòng', 'mã căn', 'số phòng', 'căn', 'stt', 'mã', 'phòng số', 'số p', 'tên phòng', 'mã p', 'room'],
+  street: ['đường', 'tòa nhà', 'địa chỉ', 'khu vực', 'tên tòa', 'phố', 'vị trí', 'tòa'],
+  address: ['số nhà', 'địa chỉ cụ thể', 'ngõ', 'ngách', 'vị trí'],
   district: ['quận', 'huyện', 'khu vực'],
-  price: ['giá', 'giá thuê', 'giá phòng', 'giá cho thuê', 'giá ký hd', 'giá chốt'],
-  deposit: ['cọc', 'tiền cọc', 'đặt cọc'],
+  price: ['giá', 'giá thuê', 'giá phòng', 'giá cho thuê', 'giá ký hd', 'giá chốt', 'giá bán', 'giá thu', 'giá nét', 'net', 'giá public', 'đơn giá', 'tiền thuê'],
+  deposit: ['cọc', 'tiền cọc', 'đặt cọc', 'mức cọc', 'cọc giữ'],
   area_m2: ['diện tích', 'dt', 'm2', 'diện tich'],
   room_type: ['loại phòng', 'phân loại', 'loại căn', 'dạng phòng', 'loại'],
-  amenities: ['nội thất', 'tiện ích', 'đồ', 'trang thiết bị', 'thiết bị nội thất', 'thiết bị'],
+  amenities: ['nội thất', 'tiện ích', 'đồ', 'trang thiết bị', 'thiết bị nội thất', 'thiết bị', 'nội thất phòng', 'tiện nghi', 'đồ đạc', 'đồ sẵn có', 'full đồ'],
   electric_price: ['điện', 'giá điện', 'tiền điện'],
   water_price: ['nước', 'giá nước', 'tiền nước'],
   status: ['trạng thái', 'tình trạng', 'hiện trạng'],
-  available_from: ['ngày trống', 'thời gian vào', 'ở luôn', 'hạn hợp đồng', 'trống từ'],
-  description: ['mô tả', 'dịch vụ', 'ghi chú', 'thông tin tòa', 'ql nhà', 'quản lý', 'ql'],
-  images: ['ảnh + video', 'ảnh+video', 'link ảnh', 'ảnh', 'ảnh phòng', 'drive', 'video', 'tiktok'],
+  available_from: ['ngày trống', 'thời gian vào', 'ở luôn', 'hạn hợp đồng', 'trống từ', 'ngày ra', 'vào ở', 'thời gian'],
+  description: ['mô tả', 'dịch vụ', 'ghi chú', 'thông tin tòa', 'ql nhà', 'quản lý', 'ql', 'chi phí', 'thông tin'],
+  images: ['ảnh + video', 'ảnh+video', 'link ảnh', 'ảnh', 'ảnh phòng', 'drive', 'video', 'tiktok', 'thư mục ảnh', 'link drive', 'album', 'ảnh gg drive', 'link'],
 };
+
+/**
+ * Extract utilities and decode abbreviations from free-text description
+ */
+export function extractUtilitiesAndAmenities(text) {
+  if (!text) return { electric: '', water: '', decodedAmenities: [] };
+  const str = String(text);
+
+  let electric = '';
+  const eleMatch = str.match(/(?:điện|tiền điện|gia dien|dien)\s*[:=]?\s*(\d+(?:[.,]\d+)?\s*(?:k|đ|nghìn)?(?:\/[^\s,]+)?)/i);
+  if (eleMatch) {
+    electric = eleMatch[1].trim();
+  }
+
+  let water = '';
+  const waterMatch = str.match(/(?:nước|tiền nước|gia nuoc|nuoc)\s*[:=]?\s*(\d+(?:[.,]\d+)?\s*(?:k|đ|nghìn)?(?:\/[^\s,]+)?)/i);
+  if (waterMatch) {
+    water = waterMatch[1].trim();
+  }
+
+  const matchesWord = (words) => {
+    const pattern = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:${words.join('|')})(?=[^\\p{L}\\p{N}]|$)`, 'iu');
+    return pattern.test(str);
+  };
+
+  const decodedAmenities = [];
+  if (matchesWord(['đh', 'dh', 'điều hoà', 'điều hòa', 'dieu hoa'])) decodedAmenities.push('Điều hòa');
+  if (matchesWord(['nl', 'bình nóng lạnh', 'nóng lạnh', 'nong lanh'])) decodedAmenities.push('Nóng lạnh');
+  if (matchesWord(['tl', 'tủ lạnh', 'tu lanh'])) decodedAmenities.push('Tủ lạnh');
+  if (matchesWord(['mg', 'máy giặt', 'may giat'])) decodedAmenities.push('Máy giặt');
+  if (matchesWord(['giường', 'giuong', 'đệm', 'dem', 'g'])) decodedAmenities.push('Giường');
+  if (matchesWord(['tủ', 'tủ quần áo', 'tu quan ao', 'tủ áo', 't'])) decodedAmenities.push('Tủ quần áo');
+  if (matchesWord(['bc', 'ban công', 'ban cong'])) decodedAmenities.push('Ban công');
+  if (matchesWord(['cs', 'cửa sổ', 'cua so'])) decodedAmenities.push('Cửa sổ');
+  if (matchesWord(['bếp', 'kệ bếp', 'bàn bếp', 'bep'])) decodedAmenities.push('Kệ bếp');
+
+  return { electric, water, decodedAmenities };
+}
 
 function makeDistrictRegex(patterns) {
   const inner = patterns.join('|');

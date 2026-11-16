@@ -380,17 +380,25 @@ export default function QuickAddSheetModal({ onClose }) {
                 {/* Expandable custom mapping editor */}
                 {showAdvancedMapping && (
                   <div className="pt-3 border-t border-emerald-200/70 space-y-2">
-                    <p className="text-[11px] text-slate-600">
-                      Nhập tên cột trong Google Sheet (tiêu đề hàng {inspectedData.headerRow || 1} hoặc chữ cái A, B, C...):
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] text-slate-600 font-medium">
+                        Chọn cột tương ứng trong Google Sheet của chủ nhà (hoặc chỉnh lại nếu cần):
+                      </p>
+                      <a
+                        href="/sale_tro_template.csv"
+                        download="sale_tro_mau_chuan.csv"
+                        className="text-[11px] text-[#0D6E6E] hover:underline font-semibold flex items-center gap-1"
+                      >
+                        <span>📥 Tải Sheet mẫu chuẩn</span>
+                      </a>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
                       {FIELD_DEFS.map((field) => (
-                        <div key={field.key} className="flex items-center gap-2">
-                          <label className="text-xs text-slate-700 w-36 shrink-0 truncate" title={field.label}>
+                        <div key={field.key} className="flex items-center gap-2 bg-slate-50/80 p-1.5 rounded-lg border border-slate-200/80">
+                          <label className="text-xs font-medium text-slate-700 w-32 shrink-0 truncate" title={field.label}>
                             {field.label}:
                           </label>
-                          <input
-                            type="text"
+                          <select
                             value={columnMap[field.key] || ''}
                             onChange={(e) =>
                               setColumnMap((prev) => ({
@@ -398,9 +406,15 @@ export default function QuickAddSheetModal({ onClose }) {
                                 [field.key]: e.target.value,
                               }))
                             }
-                            placeholder="Tên cột trong Sheet..."
                             className="flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs focus:outline-none focus:border-[#0D6E6E]"
-                          />
+                          >
+                            <option value="">-- Bỏ qua / Không có --</option>
+                            {(inspectedData.headers || []).map((h, hIdx) => (
+                              <option key={hIdx} value={h}>
+                                {h} (Cột {String.fromCharCode(65 + (hIdx % 26))})
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       ))}
                     </div>

@@ -9,6 +9,7 @@
  *   "3500000" -> 3500000
  *   "3.500.000" -> 3500000
  *   "3,5" -> 3500000 (when small number < 100)
+ *   "3.5 - 4tr" -> 3500000 (extracts min price)
  */
 export function parsePrice(raw) {
   if (raw === null || raw === undefined) return 0;
@@ -21,6 +22,21 @@ export function parsePrice(raw) {
 
   let text = String(raw).trim().toLowerCase();
   if (!text || /^-/.test(text)) return 0;
+
+  // Handle range prices like "3.5tr - 4tr", "3.5 - 4tr", "3500k - 4000k"
+  if (/[-~–—]/.test(text)) {
+    const parts = text.split(/[-~–—]/);
+    if (parts[0] && parts[0].trim()) {
+      const minPart = parts[0].trim();
+      // If minPart has no units (e.g. "3.5" in "3.5 - 4tr"), inherit unit from second part
+      const unitMatch = parts[1]?.match(/(?:tr|triệu|trieu|k|m(?!2|²))/);
+      const toParse = unitMatch && !/(?:tr|triệu|trieu|k|m)/.test(minPart)
+        ? `${minPart}${unitMatch[0]}`
+        : minPart;
+      const parsedMin = parsePrice(toParse);
+      if (parsedMin > 0) return parsedMin;
+    }
+  }
 
   // Strip currency words/symbols
   text = text.replace(/đồng|vnd|vnđ|đ|\/tháng|\/th|tháng/g, '').trim();
@@ -73,4 +89,35 @@ export function parsePrice(raw) {
   if (plain < 100) return Math.round(plain * 1_000_000);
   if (plain < 100_000) return Math.round(plain * 1_000);
   return Math.round(plain);
+}
+
+/**
+ * Parse Vietnamese deposit strings into integer VND.
+ * Handles month-based notations:
+ *   "Cọc 1 tháng" / "1 tháng" / "1th" -> 1 * roomPrice
+ *   "Cọc 2 tháng" / "2 tháng" -> 2 * roomPrice
+ *   "Cọc 50%" / "nửa tháng" / "0.5 tháng" -> 0.5 * roomPrice
+ *   Or fallback to numerical parsePrice ("3.5tr", "3000000")
+ */
+export function parseDeposit(raw, roomPrice = 0) {
+  if (raw === null || raw === undefined) return roomPrice > 0 ? roomPrice : 0;
+  const str = String(raw).trim().toLowerCase();
+  if (!str) return roomPrice > 0 ? roomPrice : 0;
+
+  // Month-based deposit notation
+  if (/^(?:cọc\s*)?1\s*(?:tháng|th|t)\b/i.test(str) || str === '1 tháng' || str === '1th') {
+    return roomPrice > 0 ? roomPrice : 0;
+  }
+  if (/^(?:cọc\s*)?2\s*(?:tháng|th|t)\b/i.test(str) || str === '2 tháng') {
+    return roomPrice > 0 ? roomPrice * 2 : 0;
+  }
+  if (/^(?:cọc\s*)?3\s*(?:tháng|th|t)\b/i.test(str)) {
+    return roomPrice > 0 ? roomPrice * 3 : 0;
+  }
+  if (str.includes('50%') || str.includes('nửa tháng') || str.includes('0.5 tháng') || str.includes('nua thang')) {
+    return roomPrice > 0 ? Math.round(roomPrice * 0.5) : 0;
+  }
+
+  const parsed = parsePrice(raw);
+  return parsed > 0 ? parsed : (roomPrice > 0 ? roomPrice : 0);
 }

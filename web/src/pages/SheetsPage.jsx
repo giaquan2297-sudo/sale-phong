@@ -210,6 +210,14 @@ export default function SheetsPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/sale_tro_template.csv"
+            download="sale_tro_mau_chuan.csv"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#0D6E6E] text-sm font-semibold shadow-2xs transition-colors"
+            title="Tải tệp mẫu bảng hàng Google Sheet chuẩn của Sale Trọ"
+          >
+            <span>📥 Mẫu Sheet chuẩn</span>
+          </a>
           <button
             type="button"
             onClick={() => syncAllMutation.mutate()}
