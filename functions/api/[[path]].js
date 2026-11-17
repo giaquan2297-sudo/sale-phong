@@ -170,6 +170,28 @@ async function ensureSchema(db) {
   } catch {}
 
   try {
+    await db.prepare("ALTER TABLE sheet_sources ADD COLUMN sheet_gid TEXT DEFAULT '0'").run();
+  } catch {}
+
+  try {
+    // Delete stale rooms for sheet 3 that don't match the actual sheet (ids <= 124)
+    await db.prepare("DELETE FROM rooms WHERE sheet_source_id = 3 AND id <= 124").run();
+  } catch {}
+
+  try {
+    // Standardize existing sheet_url to have #gid=0&range=X:X
+    const roomsWithUrl = await db.prepare("SELECT id, sheet_url FROM rooms WHERE sheet_url LIKE '%/edit#range=A%'").all();
+    for (const r of roomsWithUrl.results || []) {
+      const m = r.sheet_url.match(/#range=A([0-9]+)/);
+      if (m) {
+        const rowNum = m[1];
+        const newUrl = r.sheet_url.replace(/#range=A[0-9]+/, `#gid=0&range=${rowNum}:${rowNum}`);
+        await db.prepare("UPDATE rooms SET sheet_url = ? WHERE id = ?").bind(newUrl, r.id).run();
+      }
+    }
+  } catch {}
+
+  try {
     await db.prepare(`DELETE FROM rooms WHERE (
       code LIKE '%Hợp đồng%' OR code LIKE '%Hợp đồng%' OR 
       code LIKE '%đóng 1 cọc 1%' OR code LIKE '%cọc 1 đóng 1%' OR 
@@ -598,6 +620,7 @@ async function syncSheetSource(db, sheetId) {
     }
   }
 
+  const seenRowKeys = new Set();
   const dataRows = rows.slice(headerRowIdx + 1);
   for (let rIdx = 0; rIdx < dataRows.length; rIdx++) {
     const row = dataRows[rIdx];
@@ -753,8 +776,10 @@ async function syncSheetSource(db, sheetId) {
       else if (/sắp trống|sắp ra|ct trống|chuẩn bị|\d{1,2}\/\d{1,2}/.test(rowCombined)) status = 'sap_trong';
     }
     const sheet_row_key = `${sheet.name || 'sheet'}::${code}`;
+    seenRowKeys.add(sheet_row_key);
     const sheetRowNumber = headerRowIdx + 1 + rIdx + 1;
-    const sheet_url = `https://docs.google.com/spreadsheets/d/${sheet.spreadsheet_id}/edit#range=A${sheetRowNumber}`;
+    const gidPart = sheet.sheet_gid || '0';
+    const sheet_url = `https://docs.google.com/spreadsheets/d/${sheet.spreadsheet_id}/edit#gid=${gidPart}&range=${sheetRowNumber}:${sheetRowNumber}`;
 
     const existing = await db.prepare('SELECT id FROM rooms WHERE sheet_source_id = ? AND sheet_row_key = ?').bind(sheet.id, sheet_row_key).first();
     let roomId = null;
@@ -846,10 +871,21 @@ async function syncSheetSource(db, sheetId) {
     }
   }
 
-  await db.prepare("UPDATE sheet_sources SET last_synced_at = datetime('now', 'localtime'), last_error = '' WHERE id = ?").bind(sheet.id).run();
-  await db.prepare('INSERT INTO sync_logs (sheet_source_id, finished_at, added, updated, removed, error) VALUES (?, datetime("now", "localtime"), ?, ?, 0, "")').bind(sheet.id, added, updated).run();
+  // Cleanup stale rooms that were deleted or removed from the Google Sheet
+  let removed = 0;
+  const previousRooms = await db.prepare('SELECT id, sheet_row_key FROM rooms WHERE sheet_source_id = ?').bind(sheet.id).all();
+  for (const prev of previousRooms.results || []) {
+    if (!seenRowKeys.has(prev.sheet_row_key)) {
+      await db.prepare('DELETE FROM images WHERE room_id = ?').bind(prev.id).run();
+      await db.prepare('DELETE FROM rooms WHERE id = ?').bind(prev.id).run();
+      removed++;
+    }
+  }
 
-  return { added, updated, total: added + updated };
+  await db.prepare("UPDATE sheet_sources SET last_synced_at = datetime('now', 'localtime'), last_error = '' WHERE id = ?").bind(sheet.id).run();
+  await db.prepare('INSERT INTO sync_logs (sheet_source_id, finished_at, added, updated, removed, error) VALUES (?, datetime("now", "localtime"), ?, ?, ?, "")').bind(sheet.id, added, updated, removed).run();
+
+  return { added, updated, removed, total: added + updated };
 }
 
 // Generate RFC 4180 compliant CSV string for customers
@@ -1571,6 +1607,9 @@ export async function onRequest(context) {
         const spreadsheetId = match ? match[1] : sheetUrl.trim();
         if (!spreadsheetId) return errorResponse('Link Google Sheet không hợp lệ');
 
+        const gidMatch = sheetUrl.match(/[#&?]gid=([0-9]+)/);
+        const sheetGid = gidMatch ? gidMatch[1] : (body.sheet_gid || '0');
+
         let landlordId = body.landlord_id || null;
         if (!landlordId && body.landlord_name) {
           const lRes = await db.prepare('INSERT INTO landlords (name, note) VALUES (?, ?)').bind(
@@ -1582,12 +1621,12 @@ export async function onRequest(context) {
         const res = await db.prepare(`
           INSERT INTO sheet_sources (
             landlord_id, name, spreadsheet_id, sheet_name, header_row,
-            column_map, status_rules, default_district, enabled
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+            column_map, status_rules, default_district, sheet_gid, enabled
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         `).bind(
           landlordId, body.name || 'Bảng hàng chủ nhà', spreadsheetId, body.sheet_name || 'Sheet1',
           body.header_row || 1, JSON.stringify(body.column_map || {}), JSON.stringify(body.status_rules || {}),
-          body.default_district || 'Cầu Giấy'
+          body.default_district || 'Cầu Giấy', sheetGid
         ).run();
 
         const sheetId = res.meta?.last_row_id;
