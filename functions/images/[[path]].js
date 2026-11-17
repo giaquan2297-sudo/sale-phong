@@ -1,7 +1,6 @@
-// Cloudflare Pages Function: Proxy /images/* to Render backend
+// Cloudflare Pages Function: /images/* handler (Render-free)
 export async function onRequest(context) {
   const url = new URL(context.request.url);
-  const targetUrl = new URL(url.pathname + url.search, 'https://sale-tro-hanoi.onrender.com');
 
   if (context.request.method === 'OPTIONS') {
     return new Response(null, {
@@ -15,30 +14,15 @@ export async function onRequest(context) {
     });
   }
 
-  const newHeaders = new Headers(context.request.headers);
-  newHeaders.set('host', 'sale-tro-hanoi.onrender.com');
-
-  const forwardRequest = new Request(targetUrl.toString(), {
-    method: context.request.method,
-    headers: newHeaders,
-    body: ['GET', 'HEAD'].includes(context.request.method) ? undefined : context.request.body,
-    redirect: 'follow',
-  });
-
-  try {
-    const response = await fetch(forwardRequest);
-    const responseHeaders = new Headers(response.headers);
-    responseHeaders.set('Access-Control-Allow-Origin', '*');
-
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: responseHeaders,
-    });
-  } catch (err) {
-    return new Response('Image not found or server error', {
-      status: 502,
-      headers: { 'Access-Control-Allow-Origin': '*' },
-    });
-  }
+  // If reached, static asset was not found on CDN
+  return new Response(
+    JSON.stringify({ error: 'Image not found', path: url.pathname }),
+    {
+      status: 404,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+    }
+  );
 }
