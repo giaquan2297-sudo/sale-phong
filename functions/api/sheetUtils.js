@@ -304,6 +304,9 @@ export function parsePrice(raw) {
   const str = String(raw).trim().toLowerCase();
   if (!str) return 0;
 
+  // Ignore Vietnamese phone numbers (e.g. "0865599604", "0982379505")
+  if (/^0\d{8,10}$/.test(str.replace(/[\s.-]/g, ''))) return 0;
+
   // Handle ranges like "3.5 - 4tr" -> pick lower bound
   const rangeMatch = str.match(/^([\d.,]+)\s*[-–~to]\s*([\d.,]+)\s*(?:tr|trieu|triệu|k|m)?/i);
   if (rangeMatch) {

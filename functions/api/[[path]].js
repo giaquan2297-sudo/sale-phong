@@ -170,12 +170,15 @@ async function ensureSchema(db) {
   } catch {}
 
   try {
-    await db.prepare(`DELETE FROM rooms WHERE price <= 0 AND (
+    await db.prepare(`DELETE FROM rooms WHERE (
       code LIKE '%Hợp đồng%' OR code LIKE '%Hợp đồng%' OR 
       code LIKE '%đóng 1 cọc 1%' OR code LIKE '%cọc 1 đóng 1%' OR 
-      code = 'Giá dân' OR code LIKE '%/ người%' OR code LIKE '%/người%' OR 
+      code LIKE '%Giá dân%' OR code LIKE '%/ người%' OR code LIKE '%/người%' OR 
       code LIKE '%Hoa hồng%' OR code LIKE '%Hoa hồng%' OR 
-      code LIKE '%Giá dịch vụ%' OR length(code) > 25
+      code LIKE '%Giá dịch vụ%' OR code LIKE '%Giá nước%' OR code LIKE '%Giá điện%' OR
+      code LIKE '%Tiến độ%' OR
+      length(code) > 25 OR
+      price > 50000000
     )`).run();
   } catch {}
 
@@ -644,13 +647,22 @@ async function syncSheetSource(db, sheetId) {
       'hợp đồng', 'hop dong', 'đóng 1 cọc 1', 'dong 1 coc 1', 'cọc 1 đóng 1',
       'địa chỉ nhà', 'dia chi nha', 'lưu ý', 'quy định', 'nội quy'
     ];
-    const isPolicyRow = policyKeywords.some((kw) => codeLower.includes(kw) || (price <= 0 && rowCombined.includes(kw)));
-    if (isPolicyRow && price <= 0) {
+    const isPolicyRow = policyKeywords.some((kw) => 
+      codeLower.includes(kw) || 
+      codeLower.startsWith(kw) || 
+      row.some((c) => {
+        const cl = String(c || '').trim().toLowerCase();
+        return cl.startsWith(kw) || cl === kw;
+      })
+    );
+    if (isPolicyRow) {
       continue;
     }
-    if (price <= 0 && (codeLower.length > 25 || /^(?:giá|hoa hồng|hợp đồng|đóng \d)/i.test(codeLower))) {
+    if (codeLower.length > 25 || /^(?:giá|hoa hồng|hợp đồng|đóng \d|cọc \d|tiến độ)/i.test(codeLower)) {
       continue;
     }
+
+    if (price > 50000000) price = 0;
 
     // If price is 0, scan other columns for price patterns (e.g. "4tr", "4.000", "4,000", "4.500.000")
     if (price <= 0) {

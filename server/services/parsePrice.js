@@ -23,6 +23,9 @@ export function parsePrice(raw) {
   let text = String(raw).trim().toLowerCase();
   if (!text || /^-/.test(text)) return 0;
 
+  // Ignore Vietnamese phone numbers (e.g. "0865599604", "0982379505")
+  if (/^0\d{8,10}$/.test(text.replace(/[\s.-]/g, ''))) return 0;
+
   // Handle range prices like "3.5tr - 4tr", "3.5 - 4tr", "3500k - 4000k"
   if (/[-~–—]/.test(text)) {
     const parts = text.split(/[-~–—]/);
