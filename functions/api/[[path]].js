@@ -162,6 +162,11 @@ let schemaInitialized = false;
 async function ensureSchema(db) {
   if (schemaInitialized) return;
 
+  // Run migrations for existing databases
+  try {
+    await db.prepare("ALTER TABLE rooms ADD COLUMN sheet_url TEXT DEFAULT ''").run();
+  } catch {}
+
   const tableCheck = await db.prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='users'").first();
   if (tableCheck && tableCheck.count > 0) {
     schemaInitialized = true;
@@ -504,6 +509,10 @@ async function syncSheetSource(db, sheetId) {
   let lastKnownAddress = '';
   let lastKnownStreet = '';
   let lastKnownDistrict = sheet.default_district || '';
+
+  try {
+    await db.prepare("ALTER TABLE rooms ADD COLUMN sheet_url TEXT DEFAULT ''").run();
+  } catch {}
 
   const dataRows = rows.slice(headerRowIdx + 1);
   for (let rIdx = 0; rIdx < dataRows.length; rIdx++) {
