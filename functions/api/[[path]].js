@@ -418,6 +418,27 @@ async function ensureSchema(db) {
     await db.batch(customerStmts);
   }
 
+  // Seed sheet sources if empty
+  const sheetCount = await db.prepare('SELECT count(*) as count FROM sheet_sources').first();
+  if (!sheetCount || sheetCount.count === 0) {
+    const sheetStmts = SEED_SHEET_SOURCES.map((s) =>
+      db.prepare(`
+        INSERT OR REPLACE INTO sheet_sources (
+          id, landlord_id, name, spreadsheet_id, sheet_name, header_row,
+          column_map, status_rules, default_district, enabled, last_synced_at, last_error, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        s.id, s.landlord_id, s.name, s.spreadsheet_id, s.sheet_name, s.header_row,
+        typeof s.column_map === 'object' ? JSON.stringify(s.column_map) : s.column_map,
+        typeof s.status_rules === 'object' ? JSON.stringify(s.status_rules) : s.status_rules,
+        s.default_district, s.enabled, s.last_synced_at, s.last_error, s.created_at
+      )
+    );
+    if (sheetStmts.length > 0) {
+      await db.batch(sheetStmts);
+    }
+  }
+
   schemaInitialized = true;
 }
 

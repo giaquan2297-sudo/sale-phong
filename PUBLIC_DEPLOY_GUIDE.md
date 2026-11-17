@@ -47,23 +47,15 @@ Nếu bạn muốn **ngay cả khi tắt hẳn máy tính Mac**, khách hàng v�
    git push -u origin main
    ```
 
-#### Bước 2: Tạo Web Service miễn phí trên Render.com
-1. Vào [dashboard.render.com](https://dashboard.render.com/) và đăng nhập bằng tài khoản GitHub vừa tạo.
-2. Bấm nút **New +** ở góc trên bên phải ➔ Chọn **Web Service**.
-3. Chọn kho lưu trữ `sale-tro` vừa đưa lên GitHub.
-4. Điền các thông số:
-   * **Name**: `sale-tro` (hoặc tên tuỳ thích, ví dụ: `sale-tro-hanoi`)
-   * **Region**: Singapore (gần Việt Nam nhất, tốc độ nhanh nhất)
-   * **Runtime**: `Node`
-   * **Build Command**: `npm run build`
-   * **Start Command**: `npm start`
-   * **Instance Type**: **Free** (0$/tháng)
-5. Bấm **Create Web Service**.
+#### Bước 2: Triển khai 100% Cloudflare Pages & Cloudflare D1 (Khuyên dùng)
+Hệ thống hiện tại hoạt động 100% trên nền tảng Cloudflare Edge Serverless & Cloudflare D1 SQLite:
+* Không sử dụng máy chủ Render (tránh tình trạng ngủ đông và lỗi 502).
+* Tốc độ phản hồi cực nhanh (~300ms), 0ms cold-start.
+* Cơ sở dữ liệu SQLite Cloudflare D1 lưu trữ an toàn, sao lưu tự động.
 
-#### Bước 3: Nhận link công khai vĩnh viễn 24/7
-Sau khoảng 2 phút build, Render sẽ cấp cho bạn một đường link cố định vĩnh viễn dạng:
-👉 **`https://sale-tro-hanoi.onrender.com`**
+👉 **Đường link chính thức 24/7:**
+**`https://sale-tro-hanoi.pages.dev`**
 
-* Có sẵn HTTPS an toàn.
-* Hoạt động 24/7 không phụ thuộc vào máy tính cá nhân.
-* Bạn có thể lưu link này vào màn hình chính điện thoại và gửi link phòng cho khách xem bất cứ lúc nào!
+* Có sẵn HTTPS an toàn và CDN toàn cầu của Cloudflare.
+* Hoạt động 24/7 hoàn toàn độc lập, không phụ thuộc vào máy tính cá nhân.
+* Hỗ trợ đầy đủ phân quyền Admin / Môi giới Sale, đồng bộ Google Sheets thông minh và CRM khách hàng.
