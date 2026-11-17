@@ -18,6 +18,8 @@ import {
   parseAreaM2,
   extractUtilitiesAndAmenities,
   normalizeStatus,
+  normalizeRoomType,
+  FIELD_SYNONYMS,
   fetchPublicSheetRows,
   extractDriveFolderId,
   extractDriveFileId,
@@ -481,10 +483,35 @@ async function syncSheetSource(db, sheetId) {
     statusRules = {};
   }
 
+  const autoMap = detectColumnMap(headers);
+  const activeColMap = { ...autoMap, ...colMap };
+
   const findIdx = (field) => {
-    const colName = colMap[field];
-    if (!colName) return -1;
-    return headers.findIndex((h) => String(h || '').trim().toLowerCase() === String(colName).trim().toLowerCase());
+    // 1. Check explicit or auto mapped column
+    const colName = activeColMap[field];
+    if (colName) {
+      const idx = headers.findIndex((h) => String(h || '').trim().toLowerCase() === String(colName).trim().toLowerCase());
+      if (idx >= 0) return idx;
+    }
+    // 2. Fallback: match synonyms in headers
+    const synList = FIELD_SYNONYMS[field] || [];
+    for (const syn of synList) {
+      const cleanSyn = cleanNormalizeText(syn);
+      const idx = headers.findIndex((h) => {
+        const cleanH = cleanNormalizeText(h);
+        return cleanH === cleanSyn || cleanH.startsWith(cleanSyn + ' ') || cleanH.endsWith(' ' + cleanSyn) || cleanH.includes(' ' + cleanSyn + ' ');
+      });
+      if (idx >= 0) return idx;
+    }
+    // 3. Substring match
+    for (const syn of synList) {
+      const cleanSyn = cleanNormalizeText(syn);
+      if (cleanSyn.length >= 4) {
+        const idx = headers.findIndex((h) => cleanNormalizeText(h).includes(cleanSyn));
+        if (idx >= 0) return idx;
+      }
+    }
+    return -1;
   };
 
   const codeIdx = findIdx('code');
@@ -508,7 +535,11 @@ async function syncSheetSource(db, sheetId) {
   let updated = 0;
   let lastKnownAddress = '';
   let lastKnownStreet = '';
-  let lastKnownDistrict = sheet.default_district || '';
+  let lastKnownDistrict =
+    detectDistrict(sheet.name) ||
+    detectDistrict(sheet.sheet_name) ||
+    sheet.default_district ||
+    'Cầu Giấy';
 
   try {
     await db.prepare("ALTER TABLE rooms ADD COLUMN sheet_url TEXT DEFAULT ''").run();
@@ -517,31 +548,92 @@ async function syncSheetSource(db, sheetId) {
   const dataRows = rows.slice(headerRowIdx + 1);
   for (let rIdx = 0; rIdx < dataRows.length; rIdx++) {
     const row = dataRows[rIdx];
-    if (!row || row.length === 0) continue;
+    if (!row || row.length === 0 || row.every((c) => !String(c || '').trim())) continue;
 
     const rawCode = codeIdx >= 0 ? String(row[codeIdx] || '').trim() : '';
     const rawAddress = addressIdx >= 0 ? String(row[addressIdx] || '').trim() : '';
     const rawStreet = streetIdx >= 0 ? String(row[streetIdx] || '').trim() : '';
     const rawDistrict = districtIdx >= 0 ? String(row[districtIdx] || '').trim() : '';
     const rawPrice = priceIdx >= 0 ? row[priceIdx] : '';
+    const rawRoomType = roomTypeIdx >= 0 ? String(row[roomTypeIdx] || '').trim() : '';
+    const rawStatus = statusIdx >= 0 ? String(row[statusIdx] || '').trim() : '';
+
+    let price = parsePrice(rawPrice);
+
+    // Grouped Building Header detection: check if row is a building title (e.g. "NHÀ A4 - SỐ 7 NGÕ 20 TÂN TRIỀU")
+    const isBuildingRow =
+      (!rawCode || /^(?:nhà|tòa|toà|ccmn|chung cư|bảng hàng)/i.test(rawCode)) &&
+      (row.some((c) => /^(?:nhà|tòa|toà|ccmn|chung cư)\s+[a-z0-9]+/i.test(String(c).trim())) ||
+       row.some((c) => /^(?:số|ngõ|ngách|đường|phố|liền kề|kđt|lk)(?:\s+|:|$|[0-9])/i.test(String(c).trim())));
+
+    if (isBuildingRow && price <= 0) {
+      const bName = row.find((c) => /^(?:nhà|tòa|toà|ccmn|chung cư)\s+[a-z0-9]+/i.test(String(c).trim()));
+      const bAddr = row.find((c) => /^(?:số|ngõ|ngách|đường|phố|liền kề|kđt|lk)(?:\s+|:|$|[0-9])/i.test(String(c).trim()));
+      if (bName) lastKnownStreet = String(bName).trim();
+      if (bAddr) lastKnownAddress = String(bAddr).trim();
+      const bDistrict = detectDistrict(bAddr || bName || row.join(' '));
+      if (bDistrict) lastKnownDistrict = bDistrict;
+      continue;
+    }
+
+    // Skip repeating column header rows (e.g. "KHU VỰC | PHÒNG | GIÁ...")
+    const headerMatchCount = row.filter((c) => {
+      const norm = cleanNormalizeText(c);
+      return norm && ['ma phong', 'phong', 'gia', 'gia tien', 'dien tich', 'tinh trang', 'trang thai', 'loai phong', 'noi that'].some((k) => norm === k || norm.includes(k));
+    }).length;
+    if (headerMatchCount >= 3) {
+      continue;
+    }
+
+    // If price is 0, scan other columns for price patterns (e.g. "4tr", "4.000", "4,000", "4.500.000")
+    if (price <= 0) {
+      for (let c = 0; c < row.length; c++) {
+        if (c === codeIdx || c === areaIdx || c === imagesIdx) continue;
+        const cellStr = String(row[c] || '').trim();
+        if (/^(?:\d+[.,]\d{3}|\d+(?:[.,]\d+)?\s*(?:tr|triệu|k|m)|(?:[2-9]|\d{2})\.\d{3})$/i.test(cellStr)) {
+          const testP = parsePrice(cellStr);
+          if (testP >= 1000000 && testP <= 50000000) {
+            price = testP;
+            break;
+          }
+        }
+      }
+    }
+
+    // Skip empty or non-room rows
+    if (!rawCode && !rawAddress && price <= 0) continue;
 
     if (rawAddress) lastKnownAddress = rawAddress;
     if (rawStreet) lastKnownStreet = rawStreet;
     if (rawDistrict) {
-      lastKnownDistrict = detectDistrict(rawDistrict) || rawDistrict;
+      const d = detectDistrict(rawDistrict);
+      if (d) lastKnownDistrict = d;
     }
 
-    const price = parsePrice(rawPrice);
-    if (!rawCode && !rawAddress && price <= 0) continue;
+    const code = rawCode || (price > 0 ? `P-${rIdx + 1}` : '');
+    if (!code) continue;
 
-    const code = rawCode || `P-${rIdx + 1}`;
     const address = rawAddress || lastKnownAddress;
-    const street = rawStreet || lastKnownStreet;
-    const district = (detectDistrict(address) || detectDistrict(street) || lastKnownDistrict || sheet.default_district || 'Cầu Giấy').trim();
+    const street = rawStreet || lastKnownStreet || address;
+
+    // 1. Khu vực: ưu tiên cột khu vực -> cột địa chỉ -> cột đường/toà nhà -> toà gần nhất -> tên bảng hàng -> mặc định
+    let district = rawDistrict ? (detectDistrict(rawDistrict) || rawDistrict.trim()) : '';
+    if (!district) {
+      district =
+        detectDistrict(address) ||
+        detectDistrict(street) ||
+        detectDistrict(lastKnownAddress) ||
+        detectDistrict(lastKnownStreet) ||
+        lastKnownDistrict ||
+        detectDistrict(sheet.name) ||
+        detectDistrict(sheet.sheet_name) ||
+        sheet.default_district ||
+        'Cầu Giấy';
+    }
+
     const deposit = depositIdx >= 0 ? parseDeposit(row[depositIdx], price) : price;
     const area_m2 = areaIdx >= 0 ? parseAreaM2(row[areaIdx]) : null;
-    const room_type = roomTypeIdx >= 0 ? String(row[roomTypeIdx] || '').trim() || 'Khép kín' : 'Khép kín';
-    const status = statusIdx >= 0 ? normalizeStatus(row[statusIdx], statusRules) : 'trong';
+
     const available_from = availableFromIdx >= 0 ? String(row[availableFromIdx] || '').trim() : '';
     const description = descriptionIdx >= 0 ? String(row[descriptionIdx] || '').trim() : '';
     const private_note = privateNoteIdx >= 0 ? String(row[privateNoteIdx] || '').trim() : '';
@@ -549,6 +641,18 @@ async function syncSheetSource(db, sheetId) {
     const amenities = extractUtilitiesAndAmenities(rawAmenities + ' ' + description, rawAmenities);
     const electric_price = electricIdx >= 0 ? String(row[electricIdx] || '').trim() : '';
     const water_price = waterIdx >= 0 ? String(row[waterIdx] || '').trim() : '';
+
+    // 2. Loại phòng: chuẩn hoá từ loại phòng
+    const room_type = normalizeRoomType(rawRoomType, description, code);
+
+    // 3. Tình trạng: chuẩn hoá từ cột tình trạng
+    let status = normalizeStatus(rawStatus, statusRules);
+    if (!rawStatus) {
+      const rowCombined = row.join(' ').toLowerCase();
+      if (/đã thuê|da thue|đang ở|hết|full|kín/.test(rowCombined)) status = 'da_thue';
+      else if (/đã cọc|cọc|đang cọc/.test(rowCombined)) status = 'da_coc';
+      else if (/sắp trống|sắp ra|ct trống|chuẩn bị|\d{1,2}\/\d{1,2}/.test(rowCombined)) status = 'sap_trong';
+    }
     const sheet_row_key = `${sheet.name || 'sheet'}::${code}`;
     const sheetRowNumber = headerRowIdx + 1 + rIdx + 1;
     const sheet_url = `https://docs.google.com/spreadsheets/d/${sheet.spreadsheet_id}/edit#range=A${sheetRowNumber}`;
@@ -1345,12 +1449,18 @@ export async function onRequest(context) {
         const headers = rows[headerRow - 1] || [];
         const colMap = detectColumnMap(headers, rows.slice(headerRow, headerRow + 5));
 
+        const suggestedDistrict =
+          detectDistrict(sheet_name) ||
+          detectDistrict(rows.slice(0, 15).map((r) => (Array.isArray(r) ? r.join(' ') : '')).join(' ')) ||
+          'Cầu Giấy';
+
         return jsonResponse({
           spreadsheetId,
           sheetName: sheet_name,
           headerRow,
           headers,
           columnMap: colMap,
+          suggestedDistrict,
           previewRows: rows.slice(headerRow, headerRow + 5),
         });
       }

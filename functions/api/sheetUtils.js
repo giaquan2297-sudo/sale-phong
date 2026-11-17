@@ -1,29 +1,232 @@
 // Strategy 1: Universal Sheet Ingestion & Normalization Utilities for Cloudflare Edge
 
-export const FIELD_SYNONYMS = {
-  code: ['mã phòng', 'ma phong', 'số phòng', 'so phong', 'phòng', 'phong', 'p', 'căn', 'can', 'mã căn', 'ma can', 'mã p', 'ma p', 'tên phòng', 'stt'],
-  address: ['địa chỉ', 'dia chi', 'đ/c', 'dc', 'vị trí', 'vi tri', 'toà nhà', 'toa nha', 'ngõ', 'ngo', 'số nhà', 'so nha', 'nhà', 'nha', 'địa chỉ toà nhà'],
-  street: ['đường', 'duong', 'phố', 'pho', 'ngõ', 'ngo', 'ngách', 'ngach', 'tên đường', 'khu vực', 'khu vuc'],
-  district: ['quận', 'quan', 'huyện', 'huyen', 'quận/huyện', 'khu vực', 'khu vuc'],
-  price: ['giá', 'gia', 'giá thuê', 'gia thue', 'giá phòng', 'gia phong', 'giá net', 'gia net', 'tiền phòng', 'tien phong', 'mức giá', 'muc gia', 'price'],
-  deposit: ['cọc', 'coc', 'tiền cọc', 'tien coc', 'đặt cọc', 'dat coc', 'deposit'],
-  area: ['diện tích', 'dien tich', 'dt', 'm2', 'm²', 'diện tích (m2)', 's'],
-  room_type: ['loại phòng', 'loai phong', 'kiểu phòng', 'kieu phong', 'kết cấu', 'ket cau', 'loại căn', 'loai can', 'loại hình', 'mô hình'],
-  status: ['trạng thái', 'trang thai', 'tình trạng', 'tinh trang', 'hiện trạng', 'hien trang', 'tt', 'status', 'tình trạng phòng', 'còn/hết'],
-  available_from: ['ngày vào', 'ngay vao', 'vào ở', 'vao o', 'thời gian vào', 'thoi gian vao', 'ở ngay', 'o ngay', 'dự kiến trống', 'du kien trong', 'hạn hợp đồng', 'ngày trống'],
-  description: ['mô tả', 'mo ta', 'chi tiết', 'chi tiet', 'thông tin thêm', 'thong tin', 'ghi chú chung', 'ghi chu chung', 'đặc điểm', 'dac diem'],
-  private_note: ['ghi chú riêng', 'ghi chu rieng', 'ghi chú', 'ghi chu', 'note', 'hoa hồng', 'hoa hong', 'hh', 'phí môi giới', 'liên hệ', 'sđt', 'sdt', 'chủ nhà'],
-  amenities: ['nội thất', 'noi that', 'tiện ích', 'tien ich', 'đồ đạc', 'do dac', 'trang thiết bị', 'tiện nghi', 'dịch vụ'],
-  electric_price: ['giá điện', 'gia dien', 'tiền điện', 'tien dien', 'điện', 'dien', 'số điện'],
-  water_price: ['giá nước', 'gia nuoc', 'tiền nước', 'tien nuoc', 'nước', 'nuoc', 'khối nước'],
-  images: ['ảnh', 'anh', 'hình ảnh', 'hinh anh', 'link ảnh', 'link anh', 'drive', 'link drive', 'ảnh phòng', 'hình', 'photo', 'photos'],
-};
-
 export const DISTRICTS = [
-  'Cầu Giấy', 'Đống Đa', 'Thanh Xuân', 'Hai Bà Trưng', 'Ba Đình',
-  'Tây Hồ', 'Hoàng Mai', 'Nam Từ Liêm', 'Bắc Từ Liêm', 'Hà Đông',
-  'Long Biên', 'Hoàn Kiếm', 'Thanh Trì', 'Gia Lâm', 'Hoài Đức',
+  'Cầu Giấy',
+  'Đống Đa',
+  'Thanh Xuân',
+  'Hai Bà Trưng',
+  'Ba Đình',
+  'Tây Hồ',
+  'Hoàng Mai',
+  'Nam Từ Liêm',
+  'Bắc Từ Liêm',
+  'Hà Đông',
+  'Long Biên',
+  'Hoàn Kiếm',
+  'Thanh Trì',
+  'Gia Lâm',
+  'Hoài Đức',
 ];
+
+export const DISTRICT_KEYWORDS = [
+  {
+    district: 'Thanh Trì',
+    keywords: [
+      'thanh trì', 'thanh tri', 'tân triều', 'tan trieu', 'yên xá', 'yen xa',
+      'triều khúc', 'trieu khuc', 'tả thanh oai', 'ta thanh oai', 'hữu thanh oai',
+      'văn điển', 'van dien', 'tứ hiệp', 'tu hiep', 'ngọc hồi', 'ngoc hoi',
+      'thanh liệt', 'thanh liet', 'vĩnh quỳnh', 'vinh quynh', 'cầu bươu', 'cau buou',
+      'đại thanh', 'dai thanh', 'kim giang'
+    ],
+  },
+  {
+    district: 'Cầu Giấy',
+    keywords: [
+      'cầu giấy', 'cau giay', 'cg', 'trần thái tông', 'tran thai tong', 'duy tân', 'duy tan',
+      'trần duy hưng', 'tran duy hung', 'dịch vọng', 'dich vong', 'mai dịch', 'mai dich',
+      'nghĩa tân', 'nghia tan', 'nghĩa đô', 'nghia do', 'quan hoa', 'yên hòa', 'yen hoa',
+      'trung hòa', 'trung hoa', 'xuân thủy', 'xuan thuy', 'hồ tùng mậu', 'ho tung mau',
+      'nguyễn phong sắc', 'nguyen phong sac', 'hoàng quốc việt', 'hoang quoc viet',
+      'tô hiệu', 'to hieu', 'nguyễn khang', 'nguyen khang', 'hạ yên', 'ha yen',
+      'trung kính', 'trung kinh', 'phạm văn đồng', 'pham van dong', 'nguyễn chánh',
+      'vũ phạm hàm', 'vu pham ham', 'mạc thái tổ', 'mạc thái tông', 'hoa bằng', 'hoa bang',
+      'trần quốc vượng', 'trần quý kiên', 'phan văn trường', 'doãn kế thiện', 'doan ke thien',
+      'nguyễn khánh toàn', 'nguyen khanh toan', 'dương quảng hàm', 'chùa hà'
+    ],
+  },
+  {
+    district: 'Thanh Xuân',
+    keywords: [
+      'thanh xuân', 'thanh xuan', 'tx', 'nguyễn trãi', 'nguyen trai', 'khương đình', 'khuong dinh',
+      'khương trung', 'khuong trung', 'khương mai', 'khuong mai', 'nhân chính', 'nhan chinh',
+      'phương liệt', 'phuong liet', 'thanh xuân bắc', 'thanh xuân nam', 'nguyễn tuân', 'nguyen tuan',
+      'ngụy như kon tum', 'nguy nhu kon tum', 'lê văn lương', 'le van luong', 'hoàng văn thái',
+      'vũ tông phan', 'vu tong phan', 'bùi xương trạch', 'bui xuong trach', 'nguyễn huy tưởng',
+      'cự lộc', 'cu loc', 'chính kinh', 'chinh kinh', 'quan nhân', 'quan nhan', 'tô vĩnh diện',
+      'vương thừa vũ', 'hạ đình', 'ha dinh', 'hoàng đạo thúy', 'nguyễn xiển'
+    ],
+  },
+  {
+    district: 'Đống Đa',
+    keywords: [
+      'đống đa', 'dong da', 'đđ', 'dd', 'chùa láng', 'chua lang', 'đường láng', 'duong lang',
+      'láng hạ', 'lang ha', 'láng thượng', 'lang thuong', 'thái hà', 'thai ha', 'thái thịnh', 'thai thinh',
+      'tây sơn', 'tay son', 'xã đàn', 'xa dan', 'tôn đức thắng', 'ton duc thang', 'đê la thành',
+      'hào nam', 'hao nam', 'ô chợ dừa', 'o cho dua', 'cát linh', 'cat linh', 'khâm thiên',
+      'kham thien', 'văn chương', 'van chuong', 'nam đồng', 'nam dong', 'trung tự', 'trung tu',
+      'kim liên', 'kim lien', 'phương mai', 'phuong mai', 'nguyễn lương bằng', 'nguyen luong bang',
+      'nguyên hồng', 'nguyen hong', 'huỳnh thúc kháng', 'huynh thuc khang', 'đặng văn ngữ',
+      'phạm ngọc thạch', 'pham ngoc thach', 'chùa bộc', 'chua boc', 'hoàng cầu', 'hoang cau',
+      'yên lãng', 'yen lang', 'trần quang diệu', 'võ văn dũng'
+    ],
+  },
+  {
+    district: 'Nam Từ Liêm',
+    keywords: [
+      'nam từ liêm', 'nam tu liem', 'ntl', 'mỹ đình', 'my dinh', 'mễ trì', 'me tri',
+      'phú đô', 'phu do', 'trung văn', 'trung van', 'tây mỗ', 'tay mo', 'đại mỗ', 'dai mo',
+      'cầu diễn', 'cau dien', 'phương canh', 'phuong canh', 'xuân phương', 'xuan phuong',
+      'đình thôn', 'dinh thon', 'nguyễn cơ thạch', 'nguyen co thach', 'phạm hùng', 'pham hung',
+      'lê quang đạo', 'le quang dao', 'đỗ đức dục', 'do duc duc', 'hàm nghi', 'ham nghi',
+      'trần hữu dực', 'tran huu duc', 'phùng khoang', 'phung khoang', 'lê đức thọ'
+    ],
+  },
+  {
+    district: 'Bắc Từ Liêm',
+    keywords: [
+      'bắc từ liêm', 'bac tu liem', 'btl', 'nhổn', 'nhon', 'cổ nhuế', 'co nhue',
+      'đông ngạc', 'dong ngac', 'đức thắng', 'duc thang', 'xuân đỉnh', 'xuan dinh',
+      'xuân tảo', 'xuan tao', 'thụy phương', 'thuy phuong', 'tây tựu', 'tay tuu',
+      'kiều mai', 'kieu mai', 'hoàng công chất', 'hoang cong chat', 'văn tiến dũng', 'van tien dung'
+    ],
+  },
+  {
+    district: 'Hà Đông',
+    keywords: [
+      'hà đông', 'ha dong', 'hd', 'quang trung', 'vạn phúc', 'van phuc', 'mỗ lao', 'mo lao',
+      'văn quán', 'van quan', 'la khê', 'la khe', 'yên nghĩa', 'yen nghia', 'kiến hưng', 'kien hung',
+      'dương nội', 'duong noi', 'hà cầu', 'ha cau', 'xala', 'xa la', 'ngô thì nhậm', 'ngo thi nham',
+      'trần phú', 'tran phu', 'ba la', 'phố xốm'
+    ],
+  },
+  {
+    district: 'Hai Bà Trưng',
+    keywords: [
+      'hai bà trưng', 'hai ba trung', 'hbt', 'bách khoa', 'bach khoa', 'bạch mai', 'bach mai',
+      'minh khai', 'trương định', 'truong dinh', 'thanh nhàn', 'thanh nhan', 'đồng tâm', 'dong tam',
+      'vĩnh tuy', 'vinh tuy', 'phố huế', 'pho hue', 'bà triệu', 'ba trieu', 'lò đúc', 'lo duc',
+      'trần khát chân', 'tran khat chan', 'lê thanh nghị', 'le thanh nghi', 'tạ quang bửu', 'ta quang buu',
+      'đại la', 'dai la'
+    ],
+  },
+  {
+    district: 'Ba Đình',
+    keywords: [
+      'ba đình', 'ba dinh', 'bđ', 'bd', 'đội cấn', 'doi can', 'kim mã', 'kim ma',
+      'giảng võ', 'giang vo', 'liễu giai', 'lieu giai', 'cống vị', 'cong vi', 'ngọc khánh', 'ngoc khanh',
+      'quán thánh', 'quan thanh', 'hoàng hoa thám', 'hoang hoa tham', 'đốc ngữ'
+    ],
+  },
+  {
+    district: 'Tây Hồ',
+    keywords: [
+      'tây hồ', 'tay ho', 'th', 'lạc long quân', 'lac long quan', 'thụy khuê', 'thuy khue',
+      'xuân la', 'xuan la', 'quảng an', 'quang an', 'yên phụ', 'yen phu', 'tứ liên', 'tu lien',
+      'nhật tân', 'nhat tan', 'võ chí công', 'vo chi cong', 'âu cơ', 'au co', 'tô ngọc vân'
+    ],
+  },
+  {
+    district: 'Hoàng Mai',
+    keywords: [
+      'hoàng mai', 'hoang mai', 'hm', 'định công', 'dinh cong', 'linh đàm', 'linh dam',
+      'giáp bát', 'giap bat', 'hoàng văn thụ', 'tương mai', 'tuong mai', 'vĩnh hưng', 'vinh hung',
+      'tân mai', 'tan mai', 'lĩnh nam', 'linh nam', 'yên sở', 'yen so', 'thịnh liệt', 'thinh liet',
+      'giải phóng', 'giai phong', 'đại từ'
+    ],
+  },
+  {
+    district: 'Hoàn Kiếm',
+    keywords: ['hoàn kiếm', 'hoan kiem', 'hk', 'phố cổ', 'pho co', 'hàng bài', 'tràng tiền'],
+  },
+  {
+    district: 'Long Biên',
+    keywords: ['long biên', 'long bien', 'ngọc lâm', 'ngoc lam', 'bồ đề', 'bo de', 'sài đồng', 'sai dong', 'thạch bàn', 'việt hưng'],
+  },
+  {
+    district: 'Gia Lâm',
+    keywords: ['gia lâm', 'gia lam', 'trâu quỳ', 'trau quy', 'ocean park', 'bát tràng'],
+  },
+  {
+    district: 'Hoài Đức',
+    keywords: ['hoài đức', 'hoai duc', 'an khánh', 'an khanh', 'kim chung', 'di trạch', 'vân canh', 'trạm trôi'],
+  },
+];
+
+export const FIELD_SYNONYMS = {
+  code: [
+    'mã phòng', 'ma phong', 'số phòng', 'so phong', 'phòng', 'phong',
+    'mã căn', 'ma can', 'căn', 'can', 'số p', 'so p', 'phòng số', 'phong so',
+    'tên phòng', 'ten phong', 'mã p', 'ma p', 'stt', 'mã', 'ma', 'room'
+  ],
+  price: [
+    'giá chốt', 'gia chot', 'giá nét', 'gia net', 'giá net', 'net',
+    'giá tiền', 'gia tien', 'giá thuê', 'gia thue', 'tiền thuê', 'tien thue',
+    'giá phòng', 'gia phong', 'giá cho thuê', 'gia cho thue', 'giá ký hd', 'gia ky hd',
+    'giá ký hđ', 'giá thu', 'gia thu', 'đơn giá', 'don gia', 'giá', 'gia',
+    'mức giá', 'muc gia', 'tiền phòng', 'tien phong', 'giá gốc', 'gia goc',
+    'giá khách', 'gia khach', 'giá bán', 'gia ban', 'price'
+  ],
+  district: [
+    'khu vực', 'khu vuc', 'quận', 'quan', 'huyện', 'huyen', 'quận/huyện', 'quan/huyen',
+    'địa bàn', 'dia ban', 'khu', 'kv'
+  ],
+  street: [
+    'đường', 'duong', 'phố', 'pho', 'tên đường', 'ten duong', 'tòa nhà', 'toa nha',
+    'tên tòa', 'ten toa', 'ngõ', 'ngo', 'ngách', 'ngach', 'tòa', 'toa', 'vị trí', 'vi tri'
+  ],
+  address: [
+    'địa chỉ', 'dia chi', 'địa chỉ cụ thể', 'dia chi cu the', 'đ/c', 'dc',
+    'số nhà', 'so nha', 'vị trí', 'vi tri', 'toà nhà', 'toa nha', 'ngõ', 'ngo',
+    'ngách', 'ngach', 'nhà', 'nha', 'địa chỉ toà nhà'
+  ],
+  room_type: [
+    'loại phòng', 'loai phong', 'loại', 'loai', 'kiểu phòng', 'kieu phong',
+    'phân loại', 'phan loai', 'loại căn', 'loai can', 'dạng phòng', 'dang phong',
+    'loại hình', 'loai hinh', 'kết cấu', 'ket cau', 'mô hình', 'mo hinh'
+  ],
+  status: [
+    'tình trạng', 'tinh trang', 'trạng thái', 'trang thai', 'hiện trạng', 'hien trang',
+    'tình trạng phòng', 'tinh trang phong', 'tt', 'status', 'còn/hết', 'con/het',
+    'trống/hết', 'trong/het', 'còn trống', 'con trong'
+  ],
+  deposit: [
+    'cọc', 'coc', 'tiền cọc', 'tien coc', 'đặt cọc', 'dat coc', 'mức cọc', 'muc coc',
+    'cọc giữ', 'coc giu', 'deposit'
+  ],
+  area: [
+    'diện tích', 'dien tich', 'dt', 'm2', 'm²', 'diện tích (m2)', 's', 'diện tich'
+  ],
+  amenities: [
+    'nội thất', 'noi that', 'thiết bị nội thất', 'thiet bi noi that', 'tiện ích', 'tien ich',
+    'đồ', 'do', 'đồ đạc', 'do dac', 'trang thiết bị', 'trang thiet bi', 'thiết bị', 'thiet bi',
+    'full đồ', 'full do', 'tiện nghi', 'dịch vụ'
+  ],
+  electric_price: [
+    'giá điện', 'gia dien', 'tiền điện', 'tien dien', 'điện', 'dien', 'số điện', 'so dien'
+  ],
+  water_price: [
+    'giá nước', 'gia nuoc', 'tiền nước', 'tien nuoc', 'nước', 'nuoc', 'khối nước', 'khoi nuoc'
+  ],
+  available_from: [
+    'ngày trống', 'ngay trong', 'thời gian vào', 'thoi gian vao', 'ngày vào', 'ngay vao',
+    'vào ở', 'vao o', 'ở ngay', 'o ngay', 'ở luôn', 'o luon', 'dự kiến trống', 'du kien trong',
+    'hạn hợp đồng', 'han hop dong', 'thời gian', 'trống từ', 'ngày ra'
+  ],
+  description: [
+    'mô tả', 'mo ta', 'chi tiết', 'chi tiet', 'thông tin', 'thong tin', 'thông tin thêm',
+    'thông tin tòa', 'ghi chú chung', 'ghi chu chung', 'đặc điểm', 'dac diem', 'dịch vụ', 'dich vu'
+  ],
+  private_note: [
+    'ql nhà', 'ql nha', 'quản lý', 'quan ly', 'ql', 'sđt', 'sdt', 'liên hệ', 'lien he',
+    'chủ nhà', 'chu nha', 'ghi chú riêng', 'ghi chu rieng', 'ghi chú', 'ghi chu', 'note',
+    'hoa hồng', 'hoa hong', 'hh', 'phí môi giới', 'phi moi gioi'
+  ],
+  images: [
+    'ảnh + video', 'ảnh+video', 'link ảnh', 'link anh', 'ảnh', 'anh', 'hình ảnh', 'hinh anh',
+    'ảnh phòng', 'anh phong', 'drive', 'link drive', 'video', 'tiktok', 'thư mục ảnh', 'thu muc anh',
+    'album', 'hình', 'hinh', 'photo', 'photos', 'link'
+  ],
+};
 
 export function cleanNormalizeText(text) {
   return String(text || '')
@@ -39,13 +242,52 @@ export function cleanNormalizeText(text) {
 export function detectDistrict(text) {
   if (!text) return '';
   const clean = cleanNormalizeText(text);
+  if (!clean) return '';
+
+  // 1. Check exact or word boundary match with official district names
   for (const d of DISTRICTS) {
     const cleanD = cleanNormalizeText(d);
-    if (clean.includes(cleanD)) {
+    const regex = new RegExp(`(?:^|\\s)${cleanD}(?:\\s|$)`);
+    if (regex.test(clean)) {
       return d;
     }
   }
+
+  // 2. Check keywords (streets, wards, landmarks, abbreviations)
+  for (const item of DISTRICT_KEYWORDS) {
+    for (const kw of item.keywords) {
+      const cleanKw = cleanNormalizeText(kw);
+      if (!cleanKw) continue;
+      if (cleanKw.length <= 3) {
+        const regex = new RegExp(`(?:^|\\s)${cleanKw}(?:\\s|$)`);
+        if (regex.test(clean)) return item.district;
+      } else {
+        if (clean.includes(cleanKw)) {
+          return item.district;
+        }
+      }
+    }
+  }
+
   return '';
+}
+
+export function normalizeRoomType(text, description = '', code = '') {
+  const combined = `${text || ''} ${description || ''} ${code || ''}`.toLowerCase();
+
+  if (/studio|\bst\b|ccmn/i.test(combined)) return 'Studio';
+  if (/1n1k|1\s*ngủ\s*1\s*khách|1pn\s*1pk|1k1n|1n\s*1k/i.test(combined)) return '1N1K';
+  if (/2n1k|2\s*ngủ\s*1\s*khách|2pn\s*1pk|2k1n|2n\s*1k/i.test(combined)) return '2N1K';
+  if (/gác\s*xép|gac\s*xep|\bgx\b|gác\s*lửng|gac\s*lung|\bgl\b/i.test(combined)) return 'Gác xép';
+  if (/duplex/i.test(combined)) return 'Duplex';
+  if (/chung\s*chủ|chung\s*chu/i.test(combined)) return 'Chung chủ';
+  if (/khép\s*kín|khep\s*kin|\bkk\b|phòng\s*đơn|đơn/i.test(combined)) return 'Khép kín';
+
+  const clean = String(text || '').trim();
+  if (clean && clean.length <= 25 && !/^[0-9]+$/.test(clean)) {
+    return clean;
+  }
+  return 'Khép kín';
 }
 
 export function parsePrice(raw) {
@@ -191,7 +433,7 @@ export function normalizeStatus(rawValue, statusRules = {}) {
   if (/(?:\d{1,2}\/\d{1,2}|trống từ|ra ngày|hết hạn|cuối tháng|đầu tháng|chuẩn bị ra|sắp ra|ở đến)/i.test(text)) {
     return 'sap_trong';
   }
-  if (text.includes('đã thuê') || text.includes('da thue') || text.includes('đang ở') || text.includes('dang o') || text.includes('hết') || text.includes('full')) {
+  if (text.includes('đã thuê') || text.includes('da thue') || text.includes('đang ở') || text.includes('dang o') || text.includes('hết') || text.includes('full') || text.includes('kín') || text.includes('đã cho thuê')) {
     return 'da_thue';
   }
   if (text.includes('cọc') || text.includes('coc')) {
@@ -269,7 +511,7 @@ export async function fetchPublicSheetRows(spreadsheetId, sheetName = 'Sheet1') 
 
 export function detectHeaderRow(rows) {
   if (!rows || rows.length === 0) return 1;
-  const maxScan = Math.min(rows.length, 10);
+  const maxScan = Math.min(rows.length, 15);
   let bestRowIndex = 0;
   let bestScore = -1;
 
@@ -299,42 +541,67 @@ export function detectHeaderRow(rows) {
 }
 
 export function detectColumnMap(headers, sampleRows = []) {
-  const map = {};
-  if (!headers || headers.length === 0) return map;
+  const columnMap = {};
+  if (!Array.isArray(headers) || headers.length === 0) return columnMap;
 
-  const headerIndices = headers.map((h, idx) => ({
-    name: String(h || '').trim(),
-    clean: cleanNormalizeText(h),
-    index: idx,
-  }));
+  const candidates = [];
 
-  for (const [field, synonyms] of Object.entries(FIELD_SYNONYMS)) {
-    let matchedIndex = -1;
-    let bestScore = 0;
+  headers.forEach((header, colIndex) => {
+    const headerStr = String(header || '').trim();
+    if (!headerStr) return;
+    const normHeader = cleanNormalizeText(headerStr);
+    if (!normHeader) return;
 
-    for (const h of headerIndices) {
-      if (!h.clean) continue;
-      for (const syn of synonyms) {
-        if (h.clean === syn) {
-          if (bestScore < 3) {
-            bestScore = 3;
-            matchedIndex = h.index;
-          }
-        } else if (h.clean.includes(syn) || syn.includes(h.clean)) {
-          if (bestScore < 2) {
-            bestScore = 2;
-            matchedIndex = h.index;
-          }
+    for (const [field, synonyms] of Object.entries(FIELD_SYNONYMS)) {
+      synonyms.forEach((syn, synIndex) => {
+        const normSyn = cleanNormalizeText(syn);
+        let score = 0;
+
+        if (normHeader === normSyn) {
+          score = 1000 - synIndex * 5;
+        } else if (
+          normHeader.startsWith(normSyn + ' ') ||
+          normHeader.endsWith(' ' + normSyn) ||
+          normHeader.includes(' ' + normSyn + ' ')
+        ) {
+          score = 800 - synIndex * 5 - Math.min(50, normHeader.length - normSyn.length);
+        } else if (normHeader.startsWith(normSyn)) {
+          score = 700 - synIndex * 5 - Math.min(50, normHeader.length - normSyn.length);
+        } else if (normHeader.includes(normSyn)) {
+          score = 550 - synIndex * 5 - Math.min(80, normHeader.length - normSyn.length);
+        } else if (normSyn.includes(normHeader) && normHeader.length >= 3) {
+          score = 400 - synIndex * 5;
         }
-      }
-    }
 
-    if (matchedIndex !== -1) {
-      map[field] = headers[matchedIndex];
+        if (score > 0) {
+          candidates.push({ field, header: headerStr, colIndex, score, synIndex });
+        }
+      });
+    }
+  });
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  const mappedFields = new Set();
+  const claimedHeaders = new Set();
+
+  for (const cand of candidates) {
+    if (!mappedFields.has(cand.field) && !claimedHeaders.has(cand.header)) {
+      columnMap[cand.field] = cand.header;
+      mappedFields.add(cand.field);
+      claimedHeaders.add(cand.header);
     }
   }
 
-  return map;
+  // Fallback for address vs street
+  if (!columnMap.address) {
+    const diaChiHeader = headers.find((h) => cleanNormalizeText(h) === 'địa chỉ' || cleanNormalizeText(h) === 'địa chỉ cụ thể');
+    if (diaChiHeader && columnMap.street && columnMap.street !== diaChiHeader) {
+      columnMap.address = diaChiHeader;
+    }
+  }
+
+  return columnMap;
 }
 
 /**
