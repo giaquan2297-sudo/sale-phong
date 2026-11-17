@@ -169,6 +169,22 @@ async function ensureSchema(db) {
     await db.prepare("ALTER TABLE rooms ADD COLUMN sheet_url TEXT DEFAULT ''").run();
   } catch {}
 
+  try {
+    await db.prepare(`DELETE FROM rooms WHERE price <= 0 AND (
+      code LIKE '%Hợp đồng%' OR code LIKE '%Hợp đồng%' OR 
+      code LIKE '%đóng 1 cọc 1%' OR code LIKE '%cọc 1 đóng 1%' OR 
+      code = 'Giá dân' OR code LIKE '%/ người%' OR code LIKE '%/người%' OR 
+      code LIKE '%Hoa hồng%' OR code LIKE '%Hoa hồng%' OR 
+      code LIKE '%Giá dịch vụ%' OR length(code) > 25
+    )`).run();
+  } catch {}
+
+  try {
+    await db.prepare(`DELETE FROM sheet_sources WHERE id NOT IN (
+      SELECT MIN(id) FROM sheet_sources GROUP BY spreadsheet_id, sheet_name
+    )`).run();
+  } catch {}
+
   const tableCheck = await db.prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='users'").first();
   if (tableCheck && tableCheck.count > 0) {
     schemaInitialized = true;
@@ -545,6 +561,40 @@ async function syncSheetSource(db, sheetId) {
     await db.prepare("ALTER TABLE rooms ADD COLUMN sheet_url TEXT DEFAULT ''").run();
   } catch {}
 
+  // Pre-scan entire sheet for building metadata (address, district, electric, water, manager phone)
+  let sheetBuildingAddress = '';
+  let sheetBuildingDistrict = '';
+  let sheetElectric = '';
+  let sheetWater = '';
+  let sheetManager = '';
+
+  for (const r of rows) {
+    if (!Array.isArray(r)) continue;
+    const rowStr = r.join(' ');
+    // Detect address in footnote (e.g. "Địa chỉ nhà: Số 12 ngách 8 ngõ 71 đường Phương Mai, Đống Đa, Hà nội")
+    const addrMatch = rowStr.match(/(?:địa chỉ(?: nhà)?|đ\/c|dc|vị trí)\s*[:;]\s*([^\n\r,;|]+(?:,[^\n\r,;|]+){1,4})/i) ||
+                      rowStr.match(/(?:số\s+\d+[a-z]?\s+(?:ngõ|ngách|đường|phố)\s+[^,;|]+(?:,[^,;|]+){1,3})/i);
+    if (addrMatch && !sheetBuildingAddress) {
+      sheetBuildingAddress = addrMatch[1] ? addrMatch[1].trim() : addrMatch[0].trim();
+      sheetBuildingDistrict = detectDistrict(sheetBuildingAddress);
+    }
+    // Detect electric (e.g. "Giá điện: Giá dân" or "Điện: 3.8k/số")
+    const elecMatch = rowStr.match(/(?:giá điện|điện)\s*[:;]\s*([^\n\r,;|]+)/i);
+    if (elecMatch && !sheetElectric) {
+      sheetElectric = elecMatch[1].trim();
+    }
+    // Detect water (e.g. "Giá nước: 100,000/ người" or "Nước: 30k/khối")
+    const waterMatch = rowStr.match(/(?:giá nước|nước)\s*[:;]\s*([^\n\r,;|]+)/i);
+    if (waterMatch && !sheetWater) {
+      sheetWater = waterMatch[1].trim();
+    }
+    // Detect manager phone / contact (e.g. "SĐT: 0865599604" or "QL: 0912...")
+    const phoneMatch = rowStr.match(/(?:sđt|hotline|liên hệ|ql|quản lý|chủ nhà)\s*[:;]?\s*(0\d{8,10})/i);
+    if (phoneMatch && !sheetManager) {
+      sheetManager = phoneMatch[0].trim();
+    }
+  }
+
   const dataRows = rows.slice(headerRowIdx + 1);
   for (let rIdx = 0; rIdx < dataRows.length; rIdx++) {
     const row = dataRows[rIdx];
@@ -585,6 +635,23 @@ async function syncSheetSource(db, sheetId) {
       continue;
     }
 
+    // Skip policy/footnote rows (e.g. "Giá dịch vụ:", "Giá điện: Giá dân", "Hoa hồng: ...", "Hợp đồng kí 6 tháng...")
+    const rowCombined = row.join(' ').toLowerCase();
+    const codeLower = rawCode.toLowerCase();
+    const policyKeywords = [
+      'giá dịch vụ', 'gia dich vu', 'giá điện', 'gia dien', 'giá nước', 'gia nuoc',
+      'tiến độ thanh toán', 'tien do thanh toan', 'hoa hồng', 'hoa hong',
+      'hợp đồng', 'hop dong', 'đóng 1 cọc 1', 'dong 1 coc 1', 'cọc 1 đóng 1',
+      'địa chỉ nhà', 'dia chi nha', 'lưu ý', 'quy định', 'nội quy'
+    ];
+    const isPolicyRow = policyKeywords.some((kw) => codeLower.includes(kw) || (price <= 0 && rowCombined.includes(kw)));
+    if (isPolicyRow && price <= 0) {
+      continue;
+    }
+    if (price <= 0 && (codeLower.length > 25 || /^(?:giá|hoa hồng|hợp đồng|đóng \d)/i.test(codeLower))) {
+      continue;
+    }
+
     // If price is 0, scan other columns for price patterns (e.g. "4tr", "4.000", "4,000", "4.500.000")
     if (price <= 0) {
       for (let c = 0; c < row.length; c++) {
@@ -610,10 +677,21 @@ async function syncSheetSource(db, sheetId) {
       if (d) lastKnownDistrict = d;
     }
 
-    const code = rawCode || (price > 0 ? `P-${rIdx + 1}` : '');
+    let code = rawCode;
+    // If rawCode is empty or a generic index like "01", search row for "Phòng xxx" or "Pxxx"
+    if (!code || /^\d{1,2}$/.test(code)) {
+      for (const c of row) {
+        const cStr = String(c || '').trim();
+        if (/^(?:phòng|p\.?)\s*\d+[a-z]?$/i.test(cStr)) {
+          code = cStr;
+          break;
+        }
+      }
+    }
+    code = code || (price > 0 ? `P-${rIdx + 1}` : '');
     if (!code) continue;
 
-    const address = rawAddress || lastKnownAddress;
+    const address = rawAddress || lastKnownAddress || sheetBuildingAddress || sheet.name;
     const street = rawStreet || lastKnownStreet || address;
 
     // 1. Khu vực: ưu tiên cột khu vực (nếu match quận hợp lệ) -> cột địa chỉ -> cột đường/toà nhà -> toà gần nhất -> tên bảng hàng -> mặc định
@@ -622,6 +700,7 @@ async function syncSheetSource(db, sheetId) {
       district =
         detectDistrict(address) ||
         detectDistrict(street) ||
+        sheetBuildingDistrict ||
         detectDistrict(lastKnownAddress) ||
         detectDistrict(lastKnownStreet) ||
         lastKnownDistrict ||
@@ -642,10 +721,13 @@ async function syncSheetSource(db, sheetId) {
     if (rawDistrict && /(?:0\d{8,9}|\bql\b|\bsđt\b|liên hệ|dẫn khách)/i.test(rawDistrict) && !private_note.includes(rawDistrict.trim())) {
       private_note = private_note ? `${private_note} | QL: ${rawDistrict.trim()}` : `QL: ${rawDistrict.trim()}`;
     }
+    if (sheetManager && !private_note.includes(sheetManager)) {
+      private_note = private_note ? `${private_note} | ${sheetManager}` : sheetManager;
+    }
     const rawAmenities = amenitiesIdx >= 0 ? String(row[amenitiesIdx] || '').trim() : '';
     const amenities = extractUtilitiesAndAmenities(rawAmenities + ' ' + description, rawAmenities);
-    const electric_price = electricIdx >= 0 ? String(row[electricIdx] || '').trim() : '';
-    const water_price = waterIdx >= 0 ? String(row[waterIdx] || '').trim() : '';
+    const electric_price = (electricIdx >= 0 ? String(row[electricIdx] || '').trim() : '') || sheetElectric;
+    const water_price = (waterIdx >= 0 ? String(row[waterIdx] || '').trim() : '') || sheetWater;
 
     // 2. Loại phòng: chuẩn hoá từ loại phòng
     const room_type = normalizeRoomType(rawRoomType, description, code);

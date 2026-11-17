@@ -523,25 +523,44 @@ export function detectHeaderRow(rows) {
     const row = rows[i];
     if (!Array.isArray(row)) continue;
     let score = 0;
-    const nonEmpty = row.filter((c) => String(c || '').trim().length > 0).length;
-    if (nonEmpty < 2) continue;
+    const matchedFields = new Set();
 
     for (const cell of row) {
-      const clean = cleanNormalizeText(cell);
+      const text = String(cell || '').trim();
+      if (!text || text.length > 40) continue; // Skip long sentences / paragraphs
+      const clean = cleanNormalizeText(text);
       if (!clean) continue;
-      for (const synonyms of Object.values(FIELD_SYNONYMS)) {
-        if (synonyms.some((syn) => clean === syn || clean.includes(syn))) {
-          score += 2;
+
+      for (const [field, synonyms] of Object.entries(FIELD_SYNONYMS)) {
+        if (matchedFields.has(field)) continue;
+        for (const syn of synonyms) {
+          const cleanSyn = cleanNormalizeText(syn);
+          if (clean === cleanSyn) {
+            score += 15;
+            matchedFields.add(field);
+            break;
+          } else if (clean.startsWith(cleanSyn + ' ') || clean.endsWith(' ' + cleanSyn) || clean.includes(' ' + cleanSyn + ' ')) {
+            score += 8;
+            matchedFields.add(field);
+            break;
+          } else if (cleanSyn.length >= 4 && clean.includes(cleanSyn)) {
+            score += 4;
+            matchedFields.add(field);
+            break;
+          }
         }
       }
     }
+
+    score += matchedFields.size * 10;
+
     if (score > bestScore) {
       bestScore = score;
       bestRowIndex = i;
     }
   }
 
-  return bestScore >= 2 ? bestRowIndex + 1 : 1;
+  return bestScore >= 15 ? bestRowIndex + 1 : 1;
 }
 
 export function detectColumnMap(headers, sampleRows = []) {
