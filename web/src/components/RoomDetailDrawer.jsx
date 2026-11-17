@@ -13,6 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Calendar,
+  FileSpreadsheet,
+  ExternalLink,
 } from 'lucide-react';
 import { ROOM_STATUSES, SOURCE_LABELS, STATUS_MAP } from '../utils/constants';
 import { formatDateTime, formatPrice } from '../utils/format';
@@ -33,6 +35,9 @@ export default function RoomDetailDrawer({
   const toast = useToast();
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [copiedImgId, setCopiedImgId] = useState(null);
+  const [driveInput, setDriveInput] = useState('');
+  const [isAttachingDrive, setIsAttachingDrive] = useState(false);
+  const [showDriveForm, setShowDriveForm] = useState(false);
 
   useEscapeKey(onClose, Boolean(room));
 
@@ -41,6 +46,23 @@ export default function RoomDetailDrawer({
   }, [room?.id]);
 
   if (!room) return null;
+
+  const handleAttachDrive = async (e) => {
+    e.preventDefault();
+    if (!driveInput.trim()) return;
+    setIsAttachingDrive(true);
+    try {
+      const res = await api.attachRoomDrive(room.id, driveInput.trim());
+      toast(`Đã nạp thành công ${res.count || ''} ảnh từ Google Drive`, 'success');
+      setDriveInput('');
+      setShowDriveForm(false);
+      window.location.reload();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setIsAttachingDrive(false);
+    }
+  };
 
   const images = room.images || [];
   const safeIndex = activeImageIndex < images.length ? activeImageIndex : 0;
@@ -94,6 +116,18 @@ export default function RoomDetailDrawer({
               <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">
                 {SOURCE_LABELS[room.source] || room.source}
               </span>
+              {room.sheet_url && (
+                <a
+                  href={room.sheet_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-xs font-semibold text-emerald-800 transition-colors shadow-xs"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Xem ở Sheet gốc</span>
+                  <ExternalLink className="w-3 h-3 text-emerald-600 opacity-70" />
+                </a>
+              )}
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               Cập nhật lần cuối: {formatDateTime(room.updated_at)}
@@ -191,9 +225,49 @@ export default function RoomDetailDrawer({
             </div>
           ) : (
             <div className="py-8 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-400">
-              Chưa có ảnh phòng. Bấm "Sửa" để tải ảnh lên.
+              Chưa có ảnh phòng. Bấm "Sửa" hoặc nạp link Google Drive bên dưới.
             </div>
           )}
+
+          {/* Drive Photo Attacher */}
+          <div className="pt-1">
+            {!showDriveForm ? (
+              <button
+                type="button"
+                onClick={() => setShowDriveForm(true)}
+                className="inline-flex items-center gap-1.5 text-xs text-[#0D6E6E] hover:underline font-medium cursor-pointer"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>{images.length === 0 ? '+ Nạp ảnh phòng từ link Google Drive' : 'Thay đổi ảnh từ Google Drive'}</span>
+              </button>
+            ) : (
+              <form onSubmit={handleAttachDrive} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between text-xs font-medium text-slate-700">
+                  <span>Dán link thư mục hoặc link ảnh Google Drive:</span>
+                  <button type="button" onClick={() => setShowDriveForm(false)} className="text-slate-400 hover:text-slate-600">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={driveInput}
+                    onChange={(e) => setDriveInput(e.target.value)}
+                    placeholder="https://drive.google.com/drive/folders/..."
+                    className="flex-1 px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#0D6E6E]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isAttachingDrive || !driveInput.trim()}
+                    className="px-3 py-1.5 bg-[#0D6E6E] text-white rounded-lg text-xs font-medium hover:bg-[#0A5858] disabled:opacity-50"
+                  >
+                    {isAttachingDrive ? 'Đang nạp...' : 'Nạp ảnh'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400">Hệ thống sẽ tự động bóc tách ảnh JPEG/PNG chất lượng cao từ link Drive.</p>
+              </form>
+            )}
+          </div>
 
           {/* Quick Status Switch */}
           <div>
@@ -325,6 +399,18 @@ export default function RoomDetailDrawer({
               <Edit className="w-3.5 h-3.5" />
               <span>Sửa</span>
             </button>
+            {room.sheet_url && (
+              <a
+                href={room.sheet_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-xs font-semibold text-emerald-800 transition-colors"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Sheet gốc</span>
+                <ExternalLink className="w-3 h-3 text-emerald-600 opacity-70" />
+              </a>
+            )}
             <button
               type="button"
               onClick={handleOpenFolder}

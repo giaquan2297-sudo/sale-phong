@@ -336,3 +336,127 @@ export function detectColumnMap(headers, sampleRows = []) {
 
   return map;
 }
+
+/**
+ * Extracts Google Drive Folder ID from various URL patterns
+ */
+export function extractDriveFolderId(input) {
+  if (!input) return null;
+  const str = String(input).trim();
+  const folderMatch = str.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (folderMatch) return folderMatch[1];
+  const idMatch = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch && !str.includes('/file/d/')) return idMatch[1];
+  if (/^[a-zA-Z0-9_-]{25,}$/.test(str) && !str.includes('http')) return str;
+  return null;
+}
+
+/**
+ * Extracts Google Drive File ID from various URL patterns
+ */
+export function extractDriveFileId(input) {
+  if (!input) return null;
+  const str = String(input).trim();
+  const fileMatch = str.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return fileMatch[1];
+  const openMatch = str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (openMatch && (str.includes('/open') || str.includes('/uc'))) return openMatch[1];
+  return null;
+}
+
+/**
+ * Parses flip-entry items from https://drive.google.com/embeddedfolderview?id=<id>#list
+ */
+export function parseEmbeddedFolderView(html) {
+  const entries = [];
+  if (!html) return entries;
+  const entryRegex =
+    /<div class="flip-entry" id="entry-([a-zA-Z0-9_-]+)"[\s\S]*?<a\s+href="([^"]+)"[\s\S]*?<div class="flip-entry-title">([^<]+)<\/div>/g;
+  let m;
+  while ((m = entryRegex.exec(html)) !== null) {
+    const id = m[1];
+    const href = m[2];
+    const title = m[3].trim();
+    const isFolder = href.includes('/folders/') || m[0].includes('aria-label="Folder"');
+    const isVideo =
+      m[0].includes('type/video') ||
+      m[0].includes('alt="Video"') ||
+      /\.(mp4|mov|avi|wmv|mkv|webm)$/i.test(title);
+    entries.push({ id, href, title, isFolder, isVideo });
+  }
+  return entries;
+}
+
+/**
+ * Resolves image items from a Google Drive folder or file ID into direct CDN URLs
+ */
+export async function resolveDriveFolderImages(urlOrId) {
+  const folderId = extractDriveFolderId(urlOrId);
+  if (!folderId) {
+    const fileId = extractDriveFileId(urlOrId);
+    if (fileId) {
+      return [{ id: fileId, url: `https://lh3.googleusercontent.com/d/${fileId}=w1000` }];
+    }
+    return [];
+  }
+
+  try {
+    const url = `https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(folderId)}#list`;
+    const resp = await fetch(url, {
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return [];
+    const html = await resp.text();
+    const entries = parseEmbeddedFolderView(html);
+    const subfolders = entries.filter((e) => e.isFolder);
+    const rootImages = entries.filter((e) => !e.isFolder && !e.isVideo);
+
+    const newFolder = subfolders.find((f) => /mới|moi|new/i.test(f.title));
+    if (newFolder) {
+      try {
+        const newResp = await fetch(
+          `https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(newFolder.id)}#list`,
+          { redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) }
+        );
+        if (newResp.ok) {
+          const newHtml = await newResp.text();
+          const newEntries = parseEmbeddedFolderView(newHtml);
+          const newImages = newEntries.filter((e) => !e.isFolder && !e.isVideo);
+          if (newImages.length > 0) {
+            return newImages.slice(0, 10).map((img) => ({
+              id: img.id,
+              url: `https://lh3.googleusercontent.com/d/${img.id}=w1000`,
+            }));
+          }
+        }
+      } catch {}
+    }
+
+    if (rootImages.length > 0) {
+      return rootImages.slice(0, 10).map((img) => ({
+        id: img.id,
+        url: `https://lh3.googleusercontent.com/d/${img.id}=w1000`,
+      }));
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Extracts all plain HTTP/HTTPS image URLs from a block of text
+ */
+export function extractAllImageUrls(text) {
+  if (!text) return [];
+  const urls = [];
+  const matches = String(text).match(/https?:\/\/[^\s,;"'<>()]+/gi) || [];
+  for (const u of matches) {
+    if (/\.(jpg|jpeg|png|webp|gif|bmp)(\?.*)?$/i.test(u) || u.includes('googleusercontent.com')) {
+      urls.push(u);
+    }
+  }
+  return urls;
+}

@@ -19,6 +19,10 @@ import {
   extractUtilitiesAndAmenities,
   normalizeStatus,
   fetchPublicSheetRows,
+  extractDriveFolderId,
+  extractDriveFileId,
+  resolveDriveFolderImages,
+  extractAllImageUrls,
 } from './sheetUtils.js';
 
 const JWT_SECRET = 'sale-tro-cloudflare-secret-key-2026';
@@ -199,6 +203,7 @@ async function ensureSchema(db) {
         source TEXT NOT NULL DEFAULT 'manual',
         sheet_source_id INTEGER DEFAULT NULL,
         sheet_row_key TEXT DEFAULT NULL,
+        sheet_url TEXT DEFAULT '',
         created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         status_changed_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -332,6 +337,10 @@ async function ensureSchema(db) {
       )
     `),
   ]);
+
+  try {
+    await db.prepare("ALTER TABLE rooms ADD COLUMN sheet_url TEXT DEFAULT ''").run();
+  } catch {}
 
   // Insert default users & settings
   const adminHash = await hashPassword('admin123');
@@ -532,6 +541,8 @@ async function syncSheetSource(db, sheetId) {
     const electric_price = electricIdx >= 0 ? String(row[electricIdx] || '').trim() : '';
     const water_price = waterIdx >= 0 ? String(row[waterIdx] || '').trim() : '';
     const sheet_row_key = `${sheet.name || 'sheet'}::${code}`;
+    const sheetRowNumber = headerRowIdx + 1 + rIdx + 1;
+    const sheet_url = `https://docs.google.com/spreadsheets/d/${sheet.spreadsheet_id}/edit#range=A${sheetRowNumber}`;
 
     const existing = await db.prepare('SELECT id FROM rooms WHERE sheet_source_id = ? AND sheet_row_key = ?').bind(sheet.id, sheet_row_key).first();
     let roomId = null;
@@ -543,13 +554,13 @@ async function syncSheetSource(db, sheetId) {
           code = ?, address = ?, street = ?, district = ?, price = ?, deposit = ?,
           area_m2 = ?, room_type = ?, amenities = ?, electric_price = ?, water_price = ?,
           status = ?, available_from = ?, description = ?, private_note = ?,
-          updated_at = datetime('now', 'localtime')
+          sheet_url = ?, updated_at = datetime('now', 'localtime')
         WHERE id = ?
       `).bind(
         code, address, street, district, price, deposit,
         area_m2, room_type, amenities, electric_price, water_price,
         status, available_from, description, private_note,
-        roomId
+        sheet_url, roomId
       ).run();
       updated++;
     } else {
@@ -558,25 +569,66 @@ async function syncSheetSource(db, sheetId) {
           landlord_id, code, address, street, district, price, deposit,
           area_m2, room_type, amenities, electric_price, water_price,
           status, available_from, description, private_note, source,
-          sheet_source_id, sheet_row_key
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sheet', ?, ?)
+          sheet_source_id, sheet_row_key, sheet_url
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sheet', ?, ?, ?)
       `).bind(
         sheet.landlord_id, code, address, street, district, price, deposit,
         area_m2, room_type, amenities, electric_price, water_price,
         status, available_from, description, private_note,
-        sheet.id, sheet_row_key
+        sheet.id, sheet_row_key, sheet_url
       ).run();
       roomId = res.meta?.last_row_id;
       added++;
     }
 
-    // Save image URL if column has link
-    if (imagesIdx >= 0 && roomId) {
-      const rawImg = String(row[imagesIdx] || '').trim();
-      if (rawImg && rawImg.startsWith('http')) {
-        const existingImg = await db.prepare('SELECT id FROM images WHERE room_id = ? LIMIT 1').bind(roomId).first();
-        if (!existingImg) {
-          await db.prepare('INSERT INTO images (room_id, remote_url, is_cover, sort_order) VALUES (?, ?, 1, 0)').bind(roomId, rawImg).run();
+    // Extract & resolve images: check imagesIdx and scan row for Drive / image links
+    if (roomId) {
+      let foundDriveLink = '';
+      let foundImageUrls = [];
+
+      if (imagesIdx >= 0) {
+        const val = String(row[imagesIdx] || '').trim();
+        if (extractDriveFolderId(val) || extractDriveFileId(val)) {
+          foundDriveLink = val;
+        } else {
+          foundImageUrls.push(...extractAllImageUrls(val));
+        }
+      }
+
+      if (!foundDriveLink && foundImageUrls.length === 0) {
+        for (let c = 0; c < row.length; c++) {
+          const val = String(row[c] || '').trim();
+          if (!foundDriveLink && (extractDriveFolderId(val) || extractDriveFileId(val))) {
+            foundDriveLink = val;
+            break;
+          }
+          const imgUrls = extractAllImageUrls(val);
+          if (imgUrls.length > 0) {
+            foundImageUrls.push(...imgUrls);
+          }
+        }
+      }
+
+      const existingImgCount = await db.prepare('SELECT count(*) as count FROM images WHERE room_id = ?').bind(roomId).first();
+      const hasImages = existingImgCount && existingImgCount.count > 0;
+
+      if (foundDriveLink) {
+        const drivePhotos = await resolveDriveFolderImages(foundDriveLink);
+        if (drivePhotos.length > 0) {
+          await db.prepare('DELETE FROM images WHERE room_id = ?').bind(roomId).run();
+          for (let pIdx = 0; pIdx < drivePhotos.length; pIdx++) {
+            await db.prepare(`
+              INSERT INTO images (room_id, remote_url, is_cover, sort_order)
+              VALUES (?, ?, ?, ?)
+            `).bind(roomId, drivePhotos[pIdx].url, pIdx === 0 ? 1 : 0, pIdx).run();
+          }
+        }
+      } else if (foundImageUrls.length > 0 && !hasImages) {
+        for (let pIdx = 0; pIdx < foundImageUrls.length; pIdx++) {
+          await db.prepare(`
+            INSERT INTO images (room_id, remote_url, is_cover, sort_order)
+            VALUES (?, ?, ?, ?)
+          `).bind(roomId, foundImageUrls[pIdx], pIdx === 0 ? 1 : 0, pIdx).run();
         }
       }
     }
@@ -586,6 +638,86 @@ async function syncSheetSource(db, sheetId) {
   await db.prepare('INSERT INTO sync_logs (sheet_source_id, finished_at, added, updated, removed, error) VALUES (?, datetime("now", "localtime"), ?, ?, 0, "")').bind(sheet.id, added, updated).run();
 
   return { added, updated, total: added + updated };
+}
+
+// Generate RFC 4180 compliant CSV string for customers
+function generateCustomersCsv(customers) {
+  const headers = [
+    'STT',
+    'Tên khách hàng',
+    'Số điện thoại (Zalo)',
+    'Trường ĐH / Nơi làm việc',
+    'Ngân sách Min (VNĐ)',
+    'Ngân sách Max (VNĐ)',
+    'Khu vực cần tìm',
+    'Mức độ gấp',
+    'Thời gian cần vào',
+    'Nhu cầu chi tiết',
+    'Trạng thái chăm sóc',
+    'Phòng chốt',
+    'Địa chỉ chốt',
+    'Giá chốt (VNĐ)',
+    'Hoa hồng (VNĐ)',
+    'Trạng thái hoa hồng',
+    'Nguồn',
+    'Ngày tạo',
+  ];
+
+  const STATUS_LABELS = {
+    chua_cham: 'Chưa chăm sóc',
+    dang_cham: 'Đang tư vấn',
+    hen_xem: 'Hẹn xem phòng',
+    da_chot: 'Đã chốt phòng',
+    da_thue: 'Đã thuê',
+    huy: 'Đã huỷ / Không thuê',
+  };
+
+  const URGENCY_LABELS = {
+    gap: 'Rất gấp (vào ngay)',
+    binh_thuong: 'Bình thường',
+    tham_khao: 'Chỉ tham khảo',
+  };
+
+  const COMMISSION_STATUS_LABELS = {
+    cho_thu: 'Chờ thu hoa hồng',
+    da_thu: 'Đã thu hoa hồng',
+    that_thoat: 'Thất thoát / Không thu được',
+  };
+
+  const rows = customers.map((c, idx) => [
+    idx + 1,
+    c.name || '',
+    c.zalo_phone || '',
+    c.university || '',
+    c.budget_min ? Number(c.budget_min) : '',
+    c.budget_max ? Number(c.budget_max) : '',
+    c.districts || '',
+    URGENCY_LABELS[c.urgency] || c.urgency || '',
+    c.target_date || '',
+    (c.need_note || '').replace(/[\r\n]+/g, ' '),
+    STATUS_LABELS[c.status] || c.status || '',
+    c.deal_room_code || '',
+    c.deal_address || '',
+    c.deal_price ? Number(c.deal_price) : '',
+    c.deal_commission ? Number(c.deal_commission) : '',
+    COMMISSION_STATUS_LABELS[c.deal_commission_status] || c.deal_commission_status || '',
+    c.source || '',
+    c.created_at || '',
+  ]);
+
+  const escapeCell = (val) => {
+    const s = String(val === null || val === undefined ? '' : val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const allLines = [headers.map(escapeCell).join(',')];
+  for (const r of rows) {
+    allLines.push(r.map(escapeCell).join(','));
+  }
+  return allLines.join('\r\n');
 }
 
 // MAIN Cloudflare Pages Function entrypoint
@@ -710,6 +842,20 @@ export async function onRequest(context) {
           return jsonResponse({ ok: true, id: roomId, status });
         }
 
+        if (action === 'attach-drive' && request.method === 'POST') {
+          const { url: driveUrl } = await request.json().catch(() => ({}));
+          if (!driveUrl) return errorResponse('Vui lòng nhập link Google Drive');
+          const photos = await resolveDriveFolderImages(driveUrl);
+          if (photos.length === 0) return errorResponse('Không tìm thấy ảnh nào trong link Google Drive này. Hãy đảm bảo link đã bật quyền xem công khai.');
+          await db.prepare('DELETE FROM images WHERE room_id = ?').bind(roomId).run();
+          for (let pIdx = 0; pIdx < photos.length; pIdx++) {
+            await db.prepare('INSERT INTO images (room_id, remote_url, is_cover, sort_order) VALUES (?, ?, ?, ?)').bind(
+              roomId, photos[pIdx].url, pIdx === 0 ? 1 : 0, pIdx
+            ).run();
+          }
+          return jsonResponse({ ok: true, count: photos.length });
+        }
+
         if (action === 'images' && request.method === 'POST') {
           // Add image URL
           const { remote_url, filename } = await request.json().catch(() => ({}));
@@ -739,6 +885,13 @@ export async function onRequest(context) {
             url: img.remote_url || (img.filename ? `/images/${img.room_id}/${img.filename}` : ''),
           }));
           room.cover_image = room.images.find((i) => i.is_cover === 1)?.url || room.images[0]?.url || '';
+          room.cover_url = room.cover_image;
+          if (!room.sheet_url && room.sheet_source_id) {
+            const src = await db.prepare('SELECT spreadsheet_id FROM sheet_sources WHERE id = ?').bind(room.sheet_source_id).first();
+            if (src?.spreadsheet_id) {
+              room.sheet_url = `https://docs.google.com/spreadsheets/d/${src.spreadsheet_id}/edit`;
+            }
+          }
           return jsonResponse(room);
         }
 
@@ -841,9 +994,19 @@ export async function onRequest(context) {
           });
         }
 
+        const sheetSourcesRes = await db.prepare('SELECT id, spreadsheet_id FROM sheet_sources').all();
+        const sheetMap = {};
+        for (const s of sheetSourcesRes.results || []) {
+          sheetMap[s.id] = s.spreadsheet_id;
+        }
+
         for (const r of rooms) {
           r.images = imagesByRoom[r.id] || [];
           r.cover_image = r.images.find((i) => i.is_cover === 1)?.url || r.images[0]?.url || '';
+          r.cover_url = r.cover_image;
+          if (!r.sheet_url && r.sheet_source_id && sheetMap[r.sheet_source_id]) {
+            r.sheet_url = `https://docs.google.com/spreadsheets/d/${sheetMap[r.sheet_source_id]}/edit`;
+          }
         }
 
         return jsonResponse(rooms);
@@ -943,6 +1106,20 @@ export async function onRequest(context) {
 
     // CUSTOMERS
     if (resource === 'customers') {
+      if (idOrSub === 'export.csv' && request.method === 'GET') {
+        const customersRes = await db.prepare('SELECT * FROM customers ORDER BY id DESC').all();
+        const customers = customersRes.results || [];
+        const csvContent = generateCustomersCsv(customers);
+        return new Response('\uFEFF' + csvContent, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': 'attachment; filename="khach-hang-sale-tro.csv"',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
       const customerId = Number(idOrSub);
       if (customerId) {
         if (action === 'close-deal' && request.method === 'POST') {
@@ -1268,6 +1445,20 @@ export async function onRequest(context) {
 
     // PUBLIC
     if (resource === 'public') {
+      if (idOrSub === 'customers.csv' && request.method === 'GET') {
+        const customersRes = await db.prepare('SELECT * FROM customers ORDER BY id DESC').all();
+        const customers = customersRes.results || [];
+        const csvContent = generateCustomersCsv(customers);
+        return new Response('\uFEFF' + csvContent, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+          },
+        });
+      }
+
       if (idOrSub === 'carts' && action) {
         const slug = action;
         const cart = await db.prepare('SELECT * FROM shared_carts WHERE slug = ?').bind(slug).first();

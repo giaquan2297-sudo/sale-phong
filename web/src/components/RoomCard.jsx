@@ -1,10 +1,12 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import {
   Image as ImageIcon,
   CheckSquare,
   Square,
   Calendar,
   Send,
+  FileSpreadsheet,
+  ExternalLink,
 } from 'lucide-react';
 import { ROOM_STATUSES, STATUS_MAP } from '../utils/constants';
 import { formatPrice } from '../utils/format';
@@ -26,6 +28,8 @@ function RoomCard({
   statusMap = STATUS_MAP,
 }) {
   const st = statusMap[room.status] || ROOM_STATUSES[0];
+  const [imgError, setImgError] = useState(false);
+  const coverUrl = !imgError ? (room.cover_url || room.cover_image || room.images?.[0]?.url) : null;
 
   return (
     <div
@@ -36,12 +40,13 @@ function RoomCard({
     >
       {/* Fixed aspect-ratio container to eliminate Cumulative Layout Shift (CLS) */}
       <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden">
-        {room.cover_url ? (
+        {coverUrl ? (
           <img
-            src={room.cover_url}
+            src={coverUrl}
             alt={room.code ? `Phòng ${room.code}` : [room.street, room.district].filter(Boolean).join(', ') || 'Ảnh phòng'}
             loading="lazy"
             decoding="async"
+            onError={() => setImgError(true)}
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
         ) : (
@@ -108,17 +113,33 @@ function RoomCard({
         </div>
 
         <div
-          className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs gap-1.5"
+          className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs gap-1.5 flex-wrap"
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            type="button"
-            onClick={() => onLeadCapture?.(room)}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 font-semibold hover:bg-emerald-100 border border-emerald-200 transition-colors cursor-pointer"
-          >
-            <Calendar className="w-3 h-3 text-emerald-600" />
-            <span>Đặt lịch xem</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onLeadCapture?.(room)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 font-semibold hover:bg-emerald-100 border border-emerald-200 transition-colors cursor-pointer"
+            >
+              <Calendar className="w-3 h-3 text-emerald-600" />
+              <span>Đặt lịch</span>
+            </button>
+
+            {room.sheet_url && (
+              <a
+                href={room.sheet_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Mở dòng phòng này trên Google Sheet gốc"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-medium transition-colors"
+              >
+                <FileSpreadsheet className="w-3 h-3 text-emerald-600" />
+                <span>Sheet gốc</span>
+                <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+              </a>
+            )}
+          </div>
 
           <button
             type="button"

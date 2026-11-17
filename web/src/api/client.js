@@ -56,6 +56,8 @@ export const api = {
     request('/api/rooms/bulk-status', { method: 'PATCH', body: JSON.stringify({ ids, status }) }),
   deleteRoom: (id) => request(`/api/rooms/${id}`, { method: 'DELETE' }),
   openRoomFolder: (id) => request(`/api/rooms/${id}/open-folder`, { method: 'POST' }),
+  attachRoomDrive: (id, url) =>
+    request(`/api/rooms/${id}/attach-drive`, { method: 'POST', body: JSON.stringify({ url }) }),
 
   // Images
   uploadRoomImages: (roomId, filesWithMeta) => {

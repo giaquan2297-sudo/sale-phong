@@ -16,6 +16,7 @@ import {
   FileSpreadsheet,
   Calendar,
   ClipboardList,
+  ExternalLink,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -558,13 +559,16 @@ export default function InventoryPage() {
                       </td>
 
                       <td className="py-2.5 px-2">
-                        {room.cover_url ? (
+                        {room.cover_url || room.cover_image || room.images?.[0]?.url ? (
                           <div className="relative w-11 h-11 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0">
                             <img
-                              src={room.cover_url}
+                              src={room.cover_url || room.cover_image || room.images?.[0]?.url}
                               alt=""
                               loading="lazy"
                               decoding="async"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                              }}
                               className="w-full h-full object-cover"
                             />
                             {room.images?.length > 1 && (
@@ -581,9 +585,23 @@ export default function InventoryPage() {
                       </td>
 
                       <td className="py-2.5 px-3">
-                        <div className="font-semibold text-slate-900">
-                          {room.code ? <span className="text-[#0D6E6E] mr-1.5">[{room.code}]</span> : null}
-                          {[room.street, room.district].filter(Boolean).join(', ')}
+                        <div className="font-semibold text-slate-900 flex items-center flex-wrap gap-1">
+                          {room.code ? <span className="text-[#0D6E6E] mr-1">[{room.code}]</span> : null}
+                          <span>{[room.street, room.district].filter(Boolean).join(', ')}</span>
+                          {room.sheet_url && (
+                            <a
+                              href={room.sheet_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Xem trực tiếp trên Google Sheet"
+                              className="inline-flex items-center gap-0.5 text-[11px] font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 rounded transition-colors"
+                            >
+                              <FileSpreadsheet className="w-3 h-3 text-emerald-600" />
+                              <span>Sheet</span>
+                              <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                            </a>
+                          )}
                         </div>
                         <div className="text-xs text-slate-500 line-clamp-1">
                           {room.amenities || room.description || 'Chưa có mô tả tiện ích'}
