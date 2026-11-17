@@ -284,6 +284,10 @@ export function normalizeRoomType(text, description = '', code = '') {
   if (/khép\s*kín|khep\s*kin|\bkk\b|phòng\s*đơn|đơn/i.test(combined)) return 'Khép kín';
 
   const clean = String(text || '').trim();
+  // If clean is actually utility/amenity text like "thang máy, máy giặt", fallback to "Khép kín"
+  if (/thang\s*máy|máy\s*giặt|điều\s*hòa|nóng\s*lạnh|tủ\s*lạnh|nội\s*thất/i.test(clean)) {
+    return 'Khép kín';
+  }
   if (clean && clean.length <= 25 && !/^[0-9]+$/.test(clean)) {
     return clean;
   }

@@ -616,8 +616,8 @@ async function syncSheetSource(db, sheetId) {
     const address = rawAddress || lastKnownAddress;
     const street = rawStreet || lastKnownStreet || address;
 
-    // 1. Khu vực: ưu tiên cột khu vực -> cột địa chỉ -> cột đường/toà nhà -> toà gần nhất -> tên bảng hàng -> mặc định
-    let district = rawDistrict ? (detectDistrict(rawDistrict) || rawDistrict.trim()) : '';
+    // 1. Khu vực: ưu tiên cột khu vực (nếu match quận hợp lệ) -> cột địa chỉ -> cột đường/toà nhà -> toà gần nhất -> tên bảng hàng -> mặc định
+    let district = detectDistrict(rawDistrict);
     if (!district) {
       district =
         detectDistrict(address) ||
@@ -636,7 +636,12 @@ async function syncSheetSource(db, sheetId) {
 
     const available_from = availableFromIdx >= 0 ? String(row[availableFromIdx] || '').trim() : '';
     const description = descriptionIdx >= 0 ? String(row[descriptionIdx] || '').trim() : '';
-    const private_note = privateNoteIdx >= 0 ? String(row[privateNoteIdx] || '').trim() : '';
+    let private_note = privateNoteIdx >= 0 ? String(row[privateNoteIdx] || '').trim() : '';
+
+    // If rawDistrict contains manager/contact info, move it to private_note
+    if (rawDistrict && /(?:0\d{8,9}|\bql\b|\bsđt\b|liên hệ|dẫn khách)/i.test(rawDistrict) && !private_note.includes(rawDistrict.trim())) {
+      private_note = private_note ? `${private_note} | QL: ${rawDistrict.trim()}` : `QL: ${rawDistrict.trim()}`;
+    }
     const rawAmenities = amenitiesIdx >= 0 ? String(row[amenitiesIdx] || '').trim() : '';
     const amenities = extractUtilitiesAndAmenities(rawAmenities + ' ' + description, rawAmenities);
     const electric_price = electricIdx >= 0 ? String(row[electricIdx] || '').trim() : '';
