@@ -54,7 +54,8 @@ export const DISTRICT_KEYWORDS = [
       'ngụy như kon tum', 'nguy nhu kon tum', 'lê văn lương', 'le van luong', 'hoàng văn thái',
       'vũ tông phan', 'vu tong phan', 'bùi xương trạch', 'bui xuong trach', 'nguyễn huy tưởng',
       'cự lộc', 'cu loc', 'chính kinh', 'chinh kinh', 'quan nhân', 'quan nhan', 'tô vĩnh diện',
-      'vương thừa vũ', 'hạ đình', 'ha dinh', 'hoàng đạo thúy', 'nguyễn xiển'
+      'vương thừa vũ', 'hạ đình', 'ha dinh', 'hoàng đạo thúy', 'nguyễn xiển',
+      'lê trọng tấn', 'le trong tan'
     ],
   },
   {
@@ -68,7 +69,8 @@ export const DISTRICT_KEYWORDS = [
       'kim liên', 'kim lien', 'phương mai', 'phuong mai', 'nguyễn lương bằng', 'nguyen luong bang',
       'nguyên hồng', 'nguyen hong', 'huỳnh thúc kháng', 'huynh thuc khang', 'đặng văn ngữ',
       'phạm ngọc thạch', 'pham ngoc thach', 'chùa bộc', 'chua boc', 'hoàng cầu', 'hoang cau',
-      'yên lãng', 'yen lang', 'trần quang diệu', 'võ văn dũng'
+      'yên lãng', 'yen lang', 'trần quang diệu', 'võ văn dũng',
+      'quốc tử giám', 'quoc tu giam', 'văn miếu', 'van mieu'
     ],
   },
   {
@@ -80,7 +82,7 @@ export const DISTRICT_KEYWORDS = [
       'đình thôn', 'dinh thon', 'nguyễn cơ thạch', 'nguyen co thach', 'phạm hùng', 'pham hung',
       'lê quang đạo', 'le quang dao', 'đỗ đức dục', 'do duc duc', 'hàm nghi', 'ham nghi',
       'trần hữu dực', 'tran huu duc', 'phùng khoang', 'phung khoang', 'lê đức thọ',
-      'phú mỹ', 'phu my', 'miêu nha', 'mieu nha', 'nhổn'
+      'phú mỹ', 'phu my', 'miêu nha', 'mieu nha', 'nhổn', 'quang tiến', 'quang tien'
     ],
   },
   {
@@ -99,7 +101,8 @@ export const DISTRICT_KEYWORDS = [
       'hà đông', 'ha dong', 'hd', 'quang trung', 'vạn phúc', 'van phuc', 'mỗ lao', 'mo lao',
       'văn quán', 'van quan', 'la khê', 'la khe', 'yên nghĩa', 'yen nghia', 'kiến hưng', 'kien hung',
       'dương nội', 'duong noi', 'hà cầu', 'ha cau', 'xala', 'xa la', 'ngô thì nhậm', 'ngo thi nham',
-      'trần phú', 'tran phu', 'ba la', 'phố xốm', 'đô nghĩa', 'do nghia'
+      'trần phú', 'tran phu', 'ba la', 'phố xốm', 'đô nghĩa', 'do nghia',
+      'học viện quân y', 'hoc vien quan y', 'phùng hưng', 'phúc la'
     ],
   },
   {
@@ -117,7 +120,8 @@ export const DISTRICT_KEYWORDS = [
     keywords: [
       'ba đình', 'ba dinh', 'bđ', 'bd', 'đội cấn', 'doi can', 'kim mã', 'kim ma',
       'giảng võ', 'giang vo', 'liễu giai', 'lieu giai', 'cống vị', 'cong vi', 'ngọc khánh', 'ngoc khanh',
-      'quán thánh', 'quan thanh', 'hoàng hoa thám', 'hoang hoa tham', 'đốc ngữ'
+      'quán thánh', 'quan thanh', 'hoàng hoa thám', 'hoang hoa tham', 'đốc ngữ',
+      'đường bưởi', 'duong buoi', 'trấn vũ', 'tran vu', 'trúc bạch', 'truc bach'
     ],
   },
   {
@@ -386,6 +390,15 @@ export function parsePrice(raw) {
   if (/^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?(?:\s+|$)/i.test(str)) return 0;
   if (/^(?:p|phòng|trục)\s*\d+/i.test(str)) return 0;
 
+  // Handle alternatives like "45,000,000 hoặc 2000$"
+  if (/\s+(?:hoặc|hoac|or)\s+/i.test(str)) {
+    const firstChoice = str.split(/\s+(?:hoặc|hoac|or)\s+/i)[0]?.trim();
+    if (firstChoice) {
+      const p = parsePrice(firstChoice);
+      if (p > 0) return p;
+    }
+  }
+
   // Handle ranges like "3.5 - 4tr" -> pick lower bound
   if (/[-~–—]/.test(str)) {
     const parts = str.split(/[-~–—]/);
@@ -635,16 +648,81 @@ export function parseCsvRows(csvText) {
   return rows;
 }
 
-export async function fetchPublicSheetRows(spreadsheetId, sheetName = 'Sheet1') {
-  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(
-    spreadsheetId
-  )}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
+/**
+ * Discovers all visible worksheet tabs [{ name, gid }] of a public Google Spreadsheet
+ * by inspecting /htmlview. Hidden tabs are automatically excluded by Google Sheets.
+ */
+export async function fetchSpreadsheetTabs(spreadsheetId) {
+  try {
+    const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/htmlview`;
+    const resp = await fetch(url, { redirect: 'follow' });
+    if (!resp.ok) return [];
+    const html = await resp.text();
+    const tabs = [];
+    const regex = /items\.push\(\{name:\s*"([^"]+)",\s*pageUrl:\s*"[^"]*gid=(-?\d+)[^"]*"/g;
+    let m;
+    while ((m = regex.exec(html)) !== null) {
+      tabs.push({ name: m[1].trim(), gid: m[2].trim() });
+    }
+    return tabs;
+  } catch {
+    return [];
+  }
+}
 
-  const resp = await fetch(url, { redirect: 'follow' });
+function isHtmlErrorResponse(resp, body) {
   const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+  const trimmed = String(body || '').trimStart();
+  return (
+    !resp.ok ||
+    contentType.includes('text/html') ||
+    trimmed.startsWith('<!DOCTYPE') ||
+    trimmed.startsWith('<html')
+  );
+}
+
+export async function fetchPublicSheetRows(spreadsheetId, sheetName = 'Sheet1', explicitGid = '') {
+  const id = encodeURIComponent(spreadsheetId);
+  let targetGid = explicitGid ? String(explicitGid).trim() : '';
+
+  // If no explicit gid is provided and sheetName is generic 'Sheet1', resolve the first visible tab's gid
+  if (!targetGid) {
+    const tabs = await fetchSpreadsheetTabs(spreadsheetId);
+    if (tabs.length > 0) {
+      const matched =
+        sheetName && sheetName !== 'Sheet1'
+          ? tabs.find((t) => t.name.toLowerCase() === String(sheetName).trim().toLowerCase())
+          : null;
+      targetGid = (matched || tabs[0]).gid;
+    }
+  }
+
+  // 1. Prefer /export?format=csv&gid=... for 100% lossless cell values and exact 1-to-1 row numbers
+  if (targetGid) {
+    try {
+      const exportUrl = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(targetGid)}`;
+      const expResp = await fetch(exportUrl, { redirect: 'follow' });
+      const expBody = await expResp.text();
+      if (!isHtmlErrorResponse(expResp, expBody) && expBody.trim().length > 0) {
+        return parseCsvRows(expBody);
+      }
+    } catch {}
+
+    // 2. Fallback to /gviz/tq?tqx=out:csv&gid=... (when owner disables download/export)
+    const gvizGidUrl = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${encodeURIComponent(targetGid)}`;
+    const gvizResp = await fetch(gvizGidUrl, { redirect: 'follow' });
+    const gvizBody = await gvizResp.text();
+    if (!isHtmlErrorResponse(gvizResp, gvizBody)) {
+      return parseCsvRows(gvizBody);
+    }
+  }
+
+  // 3. Final fallback by sheet name
+  const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName || 'Sheet1')}`;
+  const resp = await fetch(url, { redirect: 'follow' });
   const body = await resp.text();
 
-  if (!resp.ok || contentType.includes('text/html') || body.trimStart().startsWith('<!DOCTYPE') || body.trimStart().startsWith('<html')) {
+  if (isHtmlErrorResponse(resp, body)) {
     throw new Error('Google Sheet đang ở chế độ riêng tư. Vui lòng bật chia sẻ "Bất kỳ ai có đường liên kết đều xem được".');
   }
 
