@@ -214,6 +214,32 @@ async function ensureSchema(db) {
     )`).run();
   } catch {}
 
+  try {
+    const custCount = await db.prepare('SELECT count(*) as count FROM customers').first();
+    if (!custCount || custCount.count === 0) {
+      const customerStmts = SEED_CUSTOMERS.map((c) =>
+        db.prepare(`
+          INSERT OR IGNORE INTO customers (
+            id, name, zalo_phone, budget_min, budget_max, districts, need_note, status,
+            created_at, updated_at, deal_room_id, deal_room_code, deal_address, deal_district,
+            deal_price, deal_date, deal_commission, deal_commission_status, urgency, target_date,
+            source, university
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          c.id, c.name, c.zalo_phone || '', c.budget_min ?? null, c.budget_max ?? null,
+          c.districts || '', c.need_note || '', c.status || 'chua_cham',
+          c.created_at, c.updated_at, c.deal_room_id ?? null, c.deal_room_code || '',
+          c.deal_address || '', c.deal_district || '', c.deal_price || 0, c.deal_date || '',
+          c.deal_commission || 0, c.deal_commission_status || 'cho_thu',
+          c.urgency || 'binh_thuong', c.target_date || '', c.source || 'manual', c.university || ''
+        )
+      );
+      if (customerStmts.length > 0) {
+        await db.batch(customerStmts);
+      }
+    }
+  } catch {}
+
   const tableCheck = await db.prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='users'").first();
   if (tableCheck && tableCheck.count > 0) {
     schemaInitialized = true;
@@ -1474,43 +1500,69 @@ export async function onRequest(context) {
         if (action === 'close-deal' && request.method === 'POST') {
           const body = await request.json().catch(() => ({}));
           const rate = Number(body.commission_rate) || 50;
-          const price = Number(body.price) || 0;
+          const price = Number(body.price || body.rent_price) || 0;
           const amount = body.commission_amount ? Number(body.commission_amount) : Math.round((price * rate) / 100);
+          const dealDate = body.deal_date || body.closed_date || new Date().toISOString().slice(0, 10);
+          const commStatus = body.commission_status || body.status || 'cho_thu';
+          const received = commStatus === 'da_thu' ? amount : Number(body.commission_received || body.received_amount) || 0;
 
           await db.prepare(`
             UPDATE customers SET
               status = 'da_chot', deal_room_id = ?, deal_room_code = ?, deal_address = ?,
               deal_district = ?, deal_price = ?, deal_date = ?, deal_commission = ?,
-              deal_commission_status = 'cho_thu', updated_at = datetime('now', 'localtime')
+              deal_commission_status = ?, updated_at = datetime('now', 'localtime')
             WHERE id = ?
           `).bind(
             body.room_id || null, body.room_code || '', body.address || '',
-            body.district || '', price, body.deal_date || new Date().toISOString().slice(0, 10),
-            amount, customerId
+            body.district || '', price, dealDate,
+            amount, commStatus, customerId
           ).run();
 
           await db.prepare(`
             INSERT INTO deals (
               customer_id, room_id, room_code, address, district, price,
-              commission_rate, commission_amount, deal_date, move_in_date,
+              commission_rate, commission_amount, commission_received, deal_date, move_in_date,
               commission_status, note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cho_thu', ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             customerId, body.room_id || null, body.room_code || '', body.address || '',
-            body.district || '', price, rate, amount,
-            body.deal_date || new Date().toISOString().slice(0, 10), body.move_in_date || '', body.note || ''
+            body.district || '', price, rate, amount, received,
+            dealDate, body.move_in_date || '', commStatus, body.note || ''
           ).run();
+
+          if (body.room_id && body.mark_room_rented) {
+            const targetRoomStatus = ['da_coc', 'da_thue'].includes(body.mark_room_rented) ? body.mark_room_rented : 'da_thue';
+            await db.prepare("UPDATE rooms SET status = ?, status_changed_at = datetime('now', 'localtime'), updated_at = datetime('now', 'localtime') WHERE id = ?").bind(targetRoomStatus, Number(body.room_id)).run();
+          }
 
           return jsonResponse({ ok: true, customer_id: customerId });
         }
 
         if (action === 'sends' && request.method === 'GET') {
-          const sends = await db.prepare('SELECT * FROM sends WHERE customer_id = ? ORDER BY id DESC').bind(customerId).all();
-          return jsonResponse(sends.results || []);
+          const customer = await db.prepare('SELECT * FROM customers WHERE id = ?').bind(customerId).first();
+          const sendsRes = await db.prepare('SELECT * FROM sends WHERE customer_id = ? ORDER BY id DESC').bind(customerId).all();
+          const sends = sendsRes.results || [];
+          for (const s of sends) {
+            let rIds = [];
+            try {
+              rIds = JSON.parse(s.room_ids || '[]');
+            } catch {}
+            if (Array.isArray(rIds) && rIds.length > 0) {
+              const ph = rIds.map(() => '?').join(',');
+              const rRes = await db.prepare(`SELECT id, code, address, street, district, price, status FROM rooms WHERE id IN (${ph})`).bind(...rIds).all();
+              s.rooms = rRes.results || [];
+            } else {
+              s.rooms = [];
+            }
+          }
+          return jsonResponse({ customer: customer || null, sends });
         }
 
-        if (request.method === 'PUT') {
+        if (request.method === 'PUT' || request.method === 'PATCH') {
           const body = await request.json().catch(() => ({}));
+          const bMin = body.budget_min !== undefined ? (body.budget_min ? Number(body.budget_min) : null) : null;
+          const bMax = body.budget_max !== undefined ? (body.budget_max ? Number(body.budget_max) : null) : (body.budget !== undefined ? (body.budget ? Number(body.budget) : null) : null);
+
           await db.prepare(`
             UPDATE customers SET
               name = COALESCE(?, name),
@@ -1526,14 +1578,26 @@ export async function onRequest(context) {
               updated_at = datetime('now', 'localtime')
             WHERE id = ?
           `).bind(
-            body.name, body.zalo_phone, body.budget_min, body.budget_max,
-            body.districts, body.need_note, body.status, body.urgency,
-            body.target_date, body.university, customerId
+            body.name ?? null,
+            (body.zalo_phone ?? body.phone) ?? null,
+            bMin,
+            bMax,
+            (body.districts ?? body.district) ?? null,
+            (body.need_note ?? body.note) ?? null,
+            body.status ?? null,
+            body.urgency ?? null,
+            (body.target_date ?? body.move_in_date) ?? null,
+            body.university ?? null,
+            customerId
           ).run();
-          return jsonResponse({ ok: true, id: customerId });
+
+          const updatedCustomer = await db.prepare('SELECT * FROM customers WHERE id = ?').bind(customerId).first();
+          return jsonResponse({ ok: true, id: customerId, ...(updatedCustomer || {}) });
         }
 
         if (request.method === 'DELETE') {
+          await db.prepare('DELETE FROM deals WHERE customer_id = ?').bind(customerId).run();
+          await db.prepare('DELETE FROM sends WHERE customer_id = ?').bind(customerId).run();
           await db.prepare('DELETE FROM customers WHERE id = ?').bind(customerId).run();
           return jsonResponse({ ok: true });
         }
@@ -1556,9 +1620,9 @@ export async function onRequest(context) {
           bindings.push(urgency);
         }
         if (q) {
-          sql += ' AND (name LIKE ? OR zalo_phone LIKE ? OR districts LIKE ? OR need_note LIKE ?)';
+          sql += ' AND (name LIKE ? OR zalo_phone LIKE ? OR districts LIKE ? OR need_note LIKE ? OR university LIKE ?)';
           const term = `%${q.trim()}%`;
-          bindings.push(term, term, term, term);
+          bindings.push(term, term, term, term, term);
         }
         sql += ' ORDER BY updated_at DESC, id DESC';
 
@@ -1568,7 +1632,19 @@ export async function onRequest(context) {
 
       if (request.method === 'POST') {
         const body = await request.json().catch(() => ({}));
-        if (!body.name) return errorResponse('Tên khách hàng không được để trống');
+        if (!body.name || !String(body.name).trim()) return errorResponse('Tên khách hàng không được để trống');
+
+        const name = String(body.name).trim();
+        const zaloPhone = String(body.zalo_phone || body.phone || '').trim();
+        const bMin = body.budget_min ? Number(body.budget_min) : null;
+        const bMax = (body.budget_max || body.budget) ? Number(body.budget_max || body.budget) : null;
+        const districts = String(body.districts || body.district || '').trim();
+        const needNote = String(body.need_note || body.note || '').trim();
+        const status = body.status || 'chua_cham';
+        const urgency = body.urgency || 'binh_thuong';
+        const targetDate = String(body.target_date || body.move_in_date || '').trim();
+        const source = body.source || 'manual';
+        const university = String(body.university || '').trim();
 
         const res = await db.prepare(`
           INSERT INTO customers (
@@ -1576,13 +1652,13 @@ export async function onRequest(context) {
             status, urgency, target_date, source, university
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
-          body.name.trim(), body.zalo_phone || '', body.budget_min ? Number(body.budget_min) : null,
-          body.budget_max ? Number(body.budget_max) : null, body.districts || '', body.need_note || '',
-          body.status || 'chua_cham', body.urgency || 'binh_thuong', body.target_date || '',
-          body.source || 'manual', body.university || ''
+          name, zaloPhone, bMin, bMax, districts, needNote,
+          status, urgency, targetDate, source, university
         ).run();
 
-        return jsonResponse({ ok: true, id: res.meta?.last_row_id }, 201);
+        const newId = res.meta?.last_row_id;
+        const created = newId ? await db.prepare('SELECT * FROM customers WHERE id = ?').bind(newId).first() : null;
+        return jsonResponse({ ok: true, id: newId, ...(created || { name, zalo_phone: zaloPhone }) }, 201);
       }
     }
 
@@ -1618,12 +1694,29 @@ export async function onRequest(context) {
       if (dealId) {
         if (action === 'status' && request.method === 'PATCH') {
           const body = await request.json().catch(() => ({}));
-          const status = typeof body === 'string' ? body : body.status;
-          await db.prepare("UPDATE deals SET commission_status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").bind(status, dealId).run();
-          return jsonResponse({ ok: true, id: dealId, status });
+          const status = typeof body === 'string' ? body : (body.status || body.commission_status || 'cho_thu');
+          const deal = await db.prepare('SELECT * FROM deals WHERE id = ?').bind(dealId).first();
+          const received =
+            body.received_amount !== undefined
+              ? Number(body.received_amount)
+              : body.commission_received !== undefined
+              ? Number(body.commission_received)
+              : status === 'da_thu'
+              ? (deal?.commission_amount || 0)
+              : 0;
+          await db.prepare("UPDATE deals SET commission_status = ?, commission_received = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").bind(status, received, dealId).run();
+          if (deal?.customer_id) {
+            await db.prepare("UPDATE customers SET deal_commission_status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").bind(status, deal.customer_id).run();
+          }
+          return jsonResponse({ ok: true, id: dealId, status, commission_received: received });
         }
         if (request.method === 'PUT') {
           const body = await request.json().catch(() => ({}));
+          const price = Number(body.price || body.rent_price) || 0;
+          const rate = Number(body.commission_rate) || 50;
+          const amount = Number(body.commission_amount) || Math.round((price * rate) / 100);
+          const status = body.commission_status || body.status || 'cho_thu';
+          const received = Number(body.commission_received ?? body.received_amount ?? (status === 'da_thu' ? amount : 0)) || 0;
           await db.prepare(`
             UPDATE deals SET
               price = ?, commission_rate = ?, commission_amount = ?, commission_received = ?,
@@ -1631,14 +1724,17 @@ export async function onRequest(context) {
               updated_at = datetime('now', 'localtime')
             WHERE id = ?
           `).bind(
-            body.price || 0, body.commission_rate || 50, body.commission_amount || 0,
-            body.commission_received || 0, body.commission_status || 'cho_thu',
-            body.deal_date || '', body.move_in_date || '', body.note || '', dealId
+            price, rate, amount, received,
+            status, body.deal_date || body.closed_date || '', body.move_in_date || '', body.note || '', dealId
           ).run();
           return jsonResponse({ ok: true, id: dealId });
         }
         if (request.method === 'DELETE') {
+          const deal = await db.prepare('SELECT customer_id FROM deals WHERE id = ?').bind(dealId).first();
           await db.prepare('DELETE FROM deals WHERE id = ?').bind(dealId).run();
+          if (deal?.customer_id) {
+            await db.prepare("UPDATE customers SET deal_room_id = NULL, deal_room_code = '', deal_address = '', deal_price = 0, deal_commission = 0 WHERE id = ?").bind(deal.customer_id).run();
+          }
           return jsonResponse({ ok: true });
         }
       }
@@ -1655,18 +1751,46 @@ export async function onRequest(context) {
 
       if (request.method === 'POST') {
         const body = await request.json().catch(() => ({}));
+        let customerId = body.customer_id ? Number(body.customer_id) : null;
+        if (!customerId && body.customer_name) {
+          const cRes = await db.prepare(
+            "INSERT INTO customers (name, zalo_phone, status, source) VALUES (?, ?, 'da_chot', 'manual')"
+          ).bind(String(body.customer_name).trim(), String(body.customer_phone || '').trim()).run();
+          customerId = cRes.meta?.last_row_id;
+        }
+
+        const price = Number(body.price || body.rent_price) || 0;
+        const rate = Number(body.commission_rate) || 50;
+        const amount = Number(body.commission_amount) || Math.round((price * rate) / 100);
+        const dealDate = body.deal_date || body.closed_date || new Date().toISOString().slice(0, 10);
+        const status = body.commission_status || body.status || 'cho_thu';
+        const received = Number(body.commission_received ?? body.received_amount ?? (status === 'da_thu' ? amount : 0)) || 0;
+
         const res = await db.prepare(`
           INSERT INTO deals (
             customer_id, room_id, room_code, address, district, price,
-            commission_rate, commission_amount, deal_date, move_in_date,
+            commission_rate, commission_amount, commission_received, deal_date, move_in_date,
             commission_status, note
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
-          body.customer_id, body.room_id || null, body.room_code || '', body.address || '',
-          body.district || '', Number(body.price) || 0, Number(body.commission_rate) || 50,
-          Number(body.commission_amount) || 0, body.deal_date || new Date().toISOString().slice(0, 10),
-          body.move_in_date || '', body.commission_status || 'cho_thu', body.note || ''
+          customerId, body.room_id || null, body.room_code || '', body.address || body.building_name || '',
+          body.district || '', price, rate, amount, received,
+          dealDate, body.move_in_date || '', status, body.note || ''
         ).run();
+
+        if (customerId) {
+          await db.prepare(`
+            UPDATE customers SET
+              status = 'da_chot', deal_room_id = ?, deal_room_code = ?, deal_address = ?,
+              deal_district = ?, deal_price = ?, deal_date = ?, deal_commission = ?,
+              deal_commission_status = ?, updated_at = datetime('now', 'localtime')
+            WHERE id = ?
+          `).bind(
+            body.room_id || null, body.room_code || '', body.address || body.building_name || '',
+            body.district || '', price, dealDate, amount, status, customerId
+          ).run();
+        }
+
         return jsonResponse({ ok: true, id: res.meta?.last_row_id }, 201);
       }
     }
@@ -1854,32 +1978,54 @@ export async function onRequest(context) {
 
       if (idOrSub === 'leads' && request.method === 'POST') {
         const body = await request.json().catch(() => ({}));
-        if (!body.name && !body.zalo_phone) return errorResponse('Vui lòng nhập tên hoặc số điện thoại / Zalo');
+        if (!body.name && !body.zalo_phone && !body.phone) return errorResponse('Vui lòng nhập tên hoặc số điện thoại / Zalo');
+
+        const noteParts = [
+          body.room_code ? `Quan tâm phòng ${body.room_code}${body.address ? ` (${body.address})` : ''}` : '',
+          body.move_in_date ? `Dọn vào: ${body.move_in_date}` : '',
+          body.need_note || body.note || '',
+        ].filter(Boolean);
 
         const res = await db.prepare(`
-          INSERT INTO customers (name, zalo_phone, budget_min, budget_max, districts, need_note, status, source)
-          VALUES (?, ?, ?, ?, ?, ?, 'chua_cham', 'public_form')
+          INSERT INTO customers (name, zalo_phone, budget_min, budget_max, districts, university, urgency, target_date, need_note, status, source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'chua_cham', ?)
         `).bind(
-          body.name || 'Khách đăng ký web', body.zalo_phone || body.phone || '',
-          body.budget_min ? Number(body.budget_min) : null, body.budget_max ? Number(body.budget_max) : null,
-          body.districts || '', body.need_note || body.note || ''
+          body.name || 'Khách đăng ký web',
+          body.zalo_phone || body.phone || '',
+          body.budget_min ? Number(body.budget_min) : null,
+          body.budget_max ? Number(body.budget_max) : (body.budget ? Number(body.budget) : null),
+          body.districts || body.district || '',
+          body.university || '',
+          body.urgency || 'normal',
+          body.target_date || body.move_in_date || null,
+          noteParts.join(' | '),
+          body.source || 'public_form'
         ).run();
 
-        return jsonResponse({ ok: true, id: res.meta?.last_row_id }, 201);
+        const created = await db.prepare('SELECT * FROM customers WHERE id = ?').bind(res.meta?.last_row_id).first();
+        return jsonResponse(created || { ok: true, id: res.meta?.last_row_id }, 201);
       }
     }
 
     if (resource === 'leads' && request.method === 'POST') {
       const body = await request.json().catch(() => ({}));
       const res = await db.prepare(`
-        INSERT INTO customers (name, zalo_phone, budget_min, budget_max, districts, need_note, status, source)
-        VALUES (?, ?, ?, ?, ?, ?, 'chua_cham', 'internal_lead')
+        INSERT INTO customers (name, zalo_phone, budget_min, budget_max, districts, university, urgency, target_date, need_note, status, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'chua_cham', ?)
       `).bind(
-        body.name || 'Khách mới', body.zalo_phone || '',
-        body.budget_min ? Number(body.budget_min) : null, body.budget_max ? Number(body.budget_max) : null,
-        body.districts || '', body.need_note || ''
+        body.name || 'Khách mới',
+        body.zalo_phone || body.phone || '',
+        body.budget_min ? Number(body.budget_min) : null,
+        body.budget_max ? Number(body.budget_max) : (body.budget ? Number(body.budget) : null),
+        body.districts || body.district || '',
+        body.university || '',
+        body.urgency || 'normal',
+        body.target_date || body.move_in_date || null,
+        body.need_note || body.note || '',
+        body.source || 'internal_lead'
       ).run();
-      return jsonResponse({ ok: true, id: res.meta?.last_row_id }, 201);
+      const created = await db.prepare('SELECT * FROM customers WHERE id = ?').bind(res.meta?.last_row_id).first();
+      return jsonResponse(created || { ok: true, id: res.meta?.last_row_id }, 201);
     }
 
     // SETTINGS
