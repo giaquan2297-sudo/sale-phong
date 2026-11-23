@@ -419,15 +419,15 @@ export function parsePrice(raw) {
     return Math.round((millions + decimal) * 1000000);
   }
 
-  // Pattern like "3.5tr", "3,5 triệu", "4tr"
-  const trMatch = str.match(/(\d+(?:[.,]\d+)?)\s*(?:tr|triệu|trieu|m(?!2|²|3))/i);
+  // Pattern like "3.5tr", "3,5 triệu", "4tr" (must NOT match "68 triều khúc" or "15 trần cung")
+  const trMatch = str.match(/(\d+(?:[.,]\d+)?)\s*(?:triệu|trieu|tr|m)(?=$|[\s.,;/)\]]|\d)/i);
   if (trMatch) {
     const num = parseFloat(trMatch[1].replace(',', '.'));
     return Number.isFinite(num) ? Math.round(num * 1000000) : 0;
   }
 
   // Pattern like "3500k" or "3.500k"
-  const kMatch = str.match(/(\d+(?:[.,]\d+)?)\s*k\b/i);
+  const kMatch = str.match(/(\d+(?:[.,]\d+)?)\s*k(?=$|[\s.,;/)\]])/i);
   if (kMatch) {
     const cleaned = kMatch[1].replace(/\.(?=\d{3}\b)/g, '').replace(',', '.');
     const num = parseFloat(cleaned);
@@ -507,12 +507,12 @@ export function extractElectricAndWater(text) {
   let electric = '';
   let water = '';
 
-  const elecMatch = s.match(/(?:giá\s*điện|tiền\s*điện|\bđiện)\s*[:=-]?\s*(giá\s*dân|nhà\s*nước|\d+(?:[.,]\d+)?\s*(?:k|đ|đồng|nghìn)(?:\s*\/\s*(?:số|kwh|kw))?)/i);
+  const elecMatch = s.match(/(?:^|[^\p{L}\p{N}])(?:giá\s*điện|tiền\s*điện|điện)\s*[:=-]?\s*(giá\s*dân|nhà\s*nước|\d+(?:[.,]\d+)?\s*(?:k|đ|đồng|nghìn)(?:\s*\/\s*(?:số|kwh|kw))?)/iu);
   if (elecMatch) {
     electric = elecMatch[1].trim().replace(/\s+/g, ' ');
   }
 
-  const waterMatch = s.match(/(?:giá\s*nước|tiền\s*nước|\bnước)\s*[:=-]?\s*(giá\s*dân|nhà\s*nước|\d+(?:[.,]\d+)?\s*(?:k|đ|đồng|nghìn)?(?:\s*\/\s*(?:khối|m3|m³|người|ng|tháng))?)/i);
+  const waterMatch = s.match(/(?:^|[^\p{L}\p{N}])(?:giá\s*nước|tiền\s*nước|nước)\s*[:=-]?\s*(giá\s*dân|nhà\s*nước|\d+(?:[.,]\d+)?\s*(?:k|đ|đồng|nghìn)?(?:\s*\/\s*(?:khối|m3|m³|người|ng|tháng))?)/iu);
   if (waterMatch) {
     water = waterMatch[1].trim().replace(/\s+/g, ' ');
   }

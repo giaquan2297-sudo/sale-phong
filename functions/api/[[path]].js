@@ -610,7 +610,7 @@ async function syncSheetSource(db, sheetId) {
   for (let preIdx = 0; preIdx < headerRowIdx; preIdx++) {
     const preRow = rows[preIdx];
     if (!Array.isArray(preRow)) continue;
-    const bName = preRow.find((c) => /^(?:nhà|tòa|toà|ccmn|chung cư)\s+[a-z0-9]+/i.test(String(c || '').trim()));
+    const bName = preRow.find((c) => /^(?:nhà|tòa|toà|ccmn|chung cư)\s+[a-z0-9_-]+$/i.test(String(c || '').trim()));
     const bAddr = preRow.find((c) => /^(?:số|ngõ|ngách|đường|phố|liền kề|kđt|lk)(?:\s+|:|$|[0-9])/i.test(String(c || '').trim()));
     if (bName || bAddr) {
       if (bName) lastKnownStreet = String(bName).trim();
@@ -648,11 +648,11 @@ async function syncSheetSource(db, sheetId) {
     // Grouped Building Header detection: check if row is a building title (e.g. "NHÀ A5 | SỐ 12 NGÕ 20 TÂN TRIỀU")
     const isBuildingRow =
       (!rawCode || /^(?:nhà|tòa|toà|ccmn|chung cư|bảng hàng)/i.test(rawCode)) &&
-      (row.some((c) => /^(?:nhà|tòa|toà|ccmn|chung cư)\s+[a-z0-9]+/i.test(String(c || '').trim())) ||
+      (row.some((c) => /^(?:nhà|tòa|toà|ccmn|chung cư)\s+[a-z0-9_-]+$/i.test(String(c || '').trim())) ||
        row.some((c) => /^(?:số|ngõ|ngách|đường|phố|liền kề|kđt|lk)(?:\s+|:|$|[0-9])/i.test(String(c || '').trim())));
 
     if (isBuildingRow && price <= 0) {
-      const bName = row.find((c) => /^(?:nhà|tòa|toà|ccmn|chung cư)\s+[a-z0-9]+/i.test(String(c || '').trim()));
+      const bName = row.find((c) => /^(?:nhà|tòa|toà|ccmn|chung cư)\s+[a-z0-9_-]+$/i.test(String(c || '').trim()));
       const bAddr = row.find((c) => /^(?:số|ngõ|ngách|đường|phố|liền kề|kđt|lk)(?:\s+|:|$|[0-9])/i.test(String(c || '').trim()));
       if (bName) lastKnownStreet = String(bName).trim();
       if (bAddr) lastKnownAddress = String(bAddr).trim();
