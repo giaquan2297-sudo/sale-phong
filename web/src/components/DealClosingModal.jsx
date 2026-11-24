@@ -6,13 +6,15 @@ import { formatPrice, formatVND } from '../utils/format';
 import { useToast } from './Toast';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 
-const RATE_PRESETS = [30, 40, 50, 60, 100];
+const RATE_PRESETS = [5, 10, 25, 30, 40, 50, 100];
+const SOURCE_PRESETS = ['TNR', 'TL21', 'a Tuyên', 'Đắc Thích', 'HappyHouse', 'alophongtro', 'a Đức Hoà bình 7', 'ngoài'];
 
 export default function DealClosingModal({
   isOpen,
   onClose,
   customer = null,
   initialRoom = null,
+  defaultSheetTab = 'Hoa Hồng',
   onSuccess = null,
 }) {
   const queryClient = useQueryClient();
@@ -32,6 +34,7 @@ export default function DealClosingModal({
     enabled: isOpen,
   });
 
+  const [sheetTab, setSheetTab] = useState(defaultSheetTab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng');
   const [selectedCustomerId, setSelectedCustomerId] = useState(customer?.id || '');
   const [customCustomerName, setCustomCustomerName] = useState(customer?.name || '');
   const [customCustomerPhone, setCustomCustomerPhone] = useState(customer?.zalo_phone || '');
@@ -44,14 +47,24 @@ export default function DealClosingModal({
     initialRoom?.address || (initialRoom ? `${initialRoom.street || ''}, ${initialRoom.district || ''}`.trim() : '')
   );
 
-  const [rentPrice, setRentPrice] = useState(initialRoom?.price ? String(initialRoom.price) : '4000000');
-  const [commissionRate, setCommissionRate] = useState(50);
-  const [commissionAmount, setCommissionAmount] = useState('2000000');
+  const [rentPrice, setRentPrice] = useState(initialRoom?.price ? String(initialRoom.price) : '3500000');
+  const [commissionRate, setCommissionRate] = useState(defaultSheetTab === 'Hoa hồng Hiền ctv' ? 10 : 50);
+  const [commissionAmount, setCommissionAmount] = useState(defaultSheetTab === 'Hoa hồng Hiền ctv' ? '350000' : '1750000');
   const [closedDate, setClosedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [commissionStatus, setCommissionStatus] = useState('cho_thu');
+  const [paymentDate, setPaymentDate] = useState('');
+  const [evidenceUrl, setEvidenceUrl] = useState('');
   const [updateRoomStatus, setUpdateRoomStatus] = useState(true);
   const [roomTargetStatus, setRoomTargetStatus] = useState('da_coc');
   const [note, setNote] = useState('');
+
+  useEffect(() => {
+    if (defaultSheetTab === 'Hoa hồng Hiền ctv') {
+      setSheetTab('Hoa hồng Hiền ctv');
+    } else if (defaultSheetTab === 'Hoa Hồng') {
+      setSheetTab('Hoa Hồng');
+    }
+  }, [defaultSheetTab]);
 
   // Sync when customer prop changes
   useEffect(() => {
@@ -145,6 +158,7 @@ export default function DealClosingModal({
 
       const foundRoom = rooms.find((r) => String(r.id) === String(selectedRoomId));
 
+      const sourceName = buildingName.trim() || address.trim() || roomCode.trim();
       const commissionPayload = {
         customer_id: custId,
         customer_name: custName,
@@ -152,9 +166,10 @@ export default function DealClosingModal({
         customer_zalo: custPhone,
         zalo_phone: custPhone,
         room_id: selectedRoomId ? Number(selectedRoomId) : null,
-        room_code: roomCode,
-        building_name: buildingName,
-        address,
+        room_code: roomCode || sourceName,
+        building_name: buildingName || sourceName,
+        source_name: sourceName,
+        address: address || sourceName,
         district: foundRoom?.district || '',
         price: numPrice,
         rent_price: numPrice,
@@ -166,6 +181,9 @@ export default function DealClosingModal({
         status: commissionStatus,
         commission_received: commissionStatus === 'da_thu' ? numCommission : 0,
         received_amount: commissionStatus === 'da_thu' ? numCommission : 0,
+        payment_date: paymentDate.trim(),
+        evidence_url: evidenceUrl.trim(),
+        sheet_tab: sheetTab,
         mark_room_rented: updateRoomStatus ? roomTargetStatus : false,
         note,
       };
@@ -203,14 +221,18 @@ export default function DealClosingModal({
 
       return commissionResult;
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['customers'] });
       queryClient.invalidateQueries({ queryKey: ['customer-sends'] });
       queryClient.invalidateQueries({ queryKey: ['rooms'] });
       queryClient.invalidateQueries({ queryKey: ['commissions'] });
       queryClient.invalidateQueries({ queryKey: ['commission-stats'] });
-      toast('Đã chốt phòng thành công và lưu vào Bảng hoa hồng!');
-      if (onSuccess) onSuccess();
+      if (res?.sheet_push?.pushed) {
+        toast(`Đã lưu deal và tự động ghi vào dòng ${res.sheet_push.sheet_row} bảng "${res.sheet_push.sheet_tab}" trên Google Sheet!`);
+      } else {
+        toast('Đã lưu deal vào Bảng hoa hồng & đồng bộ link Google Sheet!');
+      }
+      if (onSuccess) onSuccess(res);
       onClose();
     },
     onError: (err) => {
@@ -254,6 +276,43 @@ export default function DealClosingModal({
           }}
           className="p-5 space-y-4 max-h-[80vh] overflow-y-auto"
         >
+          {/* Sheet Tab Selection */}
+          <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-emerald-900">
+              Bảng Google Sheet lưu hoa hồng:
+            </span>
+            <div className="inline-flex rounded-lg bg-white p-1 border border-emerald-200 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setSheetTab('Hoa Hồng');
+                  if (commissionRate === 10) handleRateChange(50);
+                }}
+                className={`px-3 py-1 rounded-md font-semibold transition-colors ${
+                  sheetTab === 'Hoa Hồng'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Bảng Hoa Hồng (Chính)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSheetTab('Hoa hồng Hiền ctv');
+                  handleRateChange(10);
+                }}
+                className={`px-3 py-1 rounded-md font-semibold transition-colors ${
+                  sheetTab === 'Hoa hồng Hiền ctv'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Hoa hồng Hiền CTV
+              </button>
+            </div>
+          </div>
+
           {/* Customer section */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
             <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
@@ -378,25 +437,46 @@ export default function DealClosingModal({
                 />
               </div>
               <div>
-                <label className="block text-slate-500 mb-0.5">Tòa nhà / Ngõ</label>
+                <label className="block text-slate-500 mb-0.5">Nguồn / Chủ nhà</label>
                 <input
                   type="text"
                   value={buildingName}
                   onChange={(e) => setBuildingName(e.target.value)}
-                  placeholder="VD: Tòa A4"
+                  placeholder="VD: TNR, TL21, a Tuyên..."
                   className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 bg-white text-slate-800"
                 />
               </div>
               <div>
-                <label className="block text-slate-500 mb-0.5">Địa chỉ</label>
+                <label className="block text-slate-500 mb-0.5">Địa chỉ / Thông tin</label>
                 <input
                   type="text"
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
-                  placeholder="VD: 12 Trần Thái Tông"
+                  placeholder="VD: 128 Đình Thôn"
                   className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 bg-white text-slate-800"
                 />
               </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[11px] text-slate-500">Chọn nhanh nguồn:</span>
+              {SOURCE_PRESETS.map((src) => (
+                <button
+                  key={src}
+                  type="button"
+                  onClick={() => {
+                    setBuildingName(src);
+                    if (!roomCode) setRoomCode(src);
+                  }}
+                  className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                    buildingName === src
+                      ? 'bg-[#0D6E6E] text-white border-[#0D6E6E] font-semibold'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {src}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -536,12 +616,45 @@ export default function DealClosingModal({
                     name="commission_status"
                     value="da_thu"
                     checked={commissionStatus === 'da_thu'}
-                    onChange={() => setCommissionStatus('da_thu')}
+                    onChange={() => {
+                      setCommissionStatus('da_thu');
+                      if (!paymentDate) {
+                        const [y, m, d] = (closedDate || new Date().toISOString().slice(0, 10)).split('-');
+                        setPaymentDate(`${d}/${m}/${y}`);
+                      }
+                    }}
                     className="sr-only"
                   />
                   <span className="w-2 h-2 rounded-full bg-emerald-500" />
                   <span>Đã nhận đủ</span>
                 </label>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200/80">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Thời gian thanh toán
+                </label>
+                <input
+                  type="text"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  placeholder="VD: 24/11/2026"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Link bằng chứng (Google Drive / Ảnh)
+                </label>
+                <input
+                  type="text"
+                  value={evidenceUrl}
+                  onChange={(e) => setEvidenceUrl(e.target.value)}
+                  placeholder="https://drive.google.com/..."
+                  className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs bg-white"
+                />
               </div>
             </div>
           </div>

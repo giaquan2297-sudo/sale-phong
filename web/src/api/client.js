@@ -157,6 +157,11 @@ export const api = {
   updateCommission: (id, payload) =>
     request(`/api/commissions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteCommission: (id) => request(`/api/commissions/${id}`, { method: 'DELETE' }),
+  syncCommissionSheet: (payload = {}) =>
+    request('/api/commissions/sync-sheet', { method: 'POST', body: JSON.stringify(payload) }),
+  getCommissionSheetConfig: () => request('/api/commissions/sheet-config'),
+  saveCommissionSheetConfig: (payload) =>
+    request('/api/commissions/sheet-config', { method: 'POST', body: JSON.stringify(payload) }),
 
   // Shared Carts
   getCarts: () => request('/api/carts'),

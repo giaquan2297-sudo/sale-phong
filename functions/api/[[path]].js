@@ -240,6 +240,32 @@ async function ensureSchema(db) {
     }
   } catch {}
 
+  try {
+    const dealAlterCols = [
+      "ALTER TABLE deals ADD COLUMN customer_name TEXT DEFAULT ''",
+      "ALTER TABLE deals ADD COLUMN customer_phone TEXT DEFAULT ''",
+      "ALTER TABLE deals ADD COLUMN source_name TEXT DEFAULT ''",
+      "ALTER TABLE deals ADD COLUMN payment_date TEXT DEFAULT ''",
+      "ALTER TABLE deals ADD COLUMN evidence_url TEXT DEFAULT ''",
+      "ALTER TABLE deals ADD COLUMN sheet_tab TEXT DEFAULT 'Hoa Hồng'",
+      "ALTER TABLE deals ADD COLUMN sheet_row INTEGER DEFAULT NULL",
+      "ALTER TABLE deals ADD COLUMN sheet_url TEXT DEFAULT ''",
+      "ALTER TABLE deals ADD COLUMN sheet_key TEXT DEFAULT NULL",
+    ];
+    for (const sql of dealAlterCols) {
+      try {
+        await db.prepare(sql).run();
+      } catch {}
+    }
+  } catch {}
+
+  try {
+    const sheetDealsCount = await db.prepare('SELECT count(*) as count FROM deals WHERE sheet_key IS NOT NULL').first();
+    if (!sheetDealsCount || sheetDealsCount.count === 0) {
+      await syncCommissionSheet(db);
+    }
+  } catch {}
+
   const tableCheck = await db.prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='users'").first();
   if (tableCheck && tableCheck.count > 0) {
     schemaInitialized = true;
@@ -1095,6 +1121,601 @@ function generateCustomersCsv(customers) {
   return allLines.join('\r\n');
 }
 
+const DEFAULT_COMMISSION_SPREADSHEET_ID = '1rKFwKPXMBwN5vvt-gUiCgHTzuRmlN7LiF7VGYNf8gCI';
+const COMMISSION_TABS = [
+  { name: 'Hoa Hồng', gid: '1437379975', layout: 'main' },
+  { name: 'Hoa hồng Hiền ctv', gid: '153848228', layout: 'ctv' },
+];
+
+function parseCommissionVnd(raw) {
+  if (raw === null || raw === undefined) return 0;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? Math.round(raw) : 0;
+  const s = String(raw).trim();
+  if (!s || s === '0') return 0;
+  if (/(?:tr|triệu|trieu|m|k|nghìn)\b/i.test(s)) {
+    return parsePrice(s);
+  }
+  const digits = s.replace(/[^\d]/g, '');
+  return digits ? Number(digits) : 0;
+}
+
+function parseCommissionDate(rawDate, fallbackMonthStr = '', defaultYear = 2026) {
+  let year = defaultYear;
+  const ym = String(fallbackMonthStr || '').match(/(\d{1,2})\s*[\/\-]\s*(\d{4})/);
+  if (ym) year = Number(ym[2]);
+  const s = String(rawDate || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dm = s.match(/^(\d{1,2})\s*[\/\-]\s*(\d{1,2})(?:\s*[\/\-]\s*(\d{2,4}))?$/);
+  if (dm) {
+    const d = Number(dm[1]);
+    const mo = Number(dm[2]);
+    const y = dm[3] ? (dm[3].length === 2 ? 2000 + Number(dm[3]) : Number(dm[3])) : year;
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatShortSheetDate(isoDate) {
+  if (!isoDate) return '';
+  const m = String(isoDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${Number(m[3])}/${Number(m[2])}`;
+  return String(isoDate);
+}
+
+function formatFullSheetDate(isoDate) {
+  if (!isoDate) return '';
+  const m = String(isoDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return String(isoDate);
+}
+
+function formatMonthLabel(isoDate) {
+  if (!isoDate) return '';
+  const m = String(isoDate).match(/^(\d{4})-(\d{2})/);
+  if (m) return `Tháng ${m[2]}/${m[1]}`;
+  return '';
+}
+
+async function getGoogleAccessToken(saJsonStr) {
+  try {
+    const sa = typeof saJsonStr === 'string' ? JSON.parse(saJsonStr) : saJsonStr;
+    if (!sa || !sa.client_email || !sa.private_key) return null;
+
+    const now = Math.floor(Date.now() / 1000);
+    const header = { alg: 'RS256', typ: 'JWT' };
+    const claim = {
+      iss: sa.client_email,
+      scope: 'https://www.googleapis.com/auth/spreadsheets',
+      aud: sa.token_uri || 'https://oauth2.googleapis.com/token',
+      exp: now + 3600,
+      iat: now,
+    };
+
+    const b64u = (str) =>
+      btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const unsigned = `${b64u(JSON.stringify(header))}.${b64u(JSON.stringify(claim))}`;
+
+    const pemContents = sa.private_key
+      .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+      .replace(/-----END PRIVATE KEY-----/g, '')
+      .replace(/\s+/g, '');
+    const binaryDer = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+
+    const cryptoKey = await crypto.subtle.importKey(
+      'pkcs8',
+      binaryDer.buffer,
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const sigBuf = await crypto.subtle.sign(
+      'RSASSA-PKCS1-v1_5',
+      cryptoKey,
+      new TextEncoder().encode(unsigned)
+    );
+    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    const jwt = `${unsigned}.${sigB64}`;
+
+    const tokenResp = await fetch(sa.token_uri || 'https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
+    });
+    if (!tokenResp.ok) return null;
+    const tokenData = await tokenResp.json();
+    return tokenData.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildSheetRowForDeal(deal, layout = 'main') {
+  const custName = deal.customer_name || '';
+  const custPhone = deal.customer_phone || '';
+  const priceStr = Number(deal.price || 0).toLocaleString('vi-VN');
+  const shortDate = formatShortSheetDate(deal.deal_date);
+  const sourceOrAddress = deal.source_name || deal.address || deal.room_code || '';
+  const rateStr = `${Number(deal.commission_rate ?? 50)}%`;
+  const isPaid = deal.commission_status === 'da_thu';
+  const amountStr = Number(deal.commission_amount || 0).toLocaleString('vi-VN');
+  const payDate =
+    deal.payment_date || (isPaid ? formatFullSheetDate(deal.deal_date) : '');
+  const evidence = deal.evidence_url || '';
+  const note = deal.note || '';
+
+  if (layout === 'ctv') {
+    return [
+      custName,
+      custPhone,
+      priceStr,
+      shortDate,
+      rateStr,
+      isPaid ? 'TRUE' : 'FALSE',
+      amountStr,
+      payDate,
+      sourceOrAddress,
+      deal.move_in_date || '',
+      note,
+      formatMonthLabel(deal.deal_date),
+    ];
+  }
+
+  return [
+    custName,
+    custPhone,
+    priceStr,
+    shortDate,
+    sourceOrAddress,
+    rateStr,
+    isPaid ? 'TRUE' : 'FALSE',
+    amountStr,
+    payDate,
+    evidence,
+    note,
+  ];
+}
+
+async function pushDealToCommissionSheet(db, action, deal) {
+  const spreadsheetRow = await db
+    .prepare("SELECT value FROM settings WHERE key = 'commission_sheet_id'")
+    .first()
+    .catch(() => null);
+  const spreadsheetId = spreadsheetRow?.value || DEFAULT_COMMISSION_SPREADSHEET_ID;
+
+  const tabName = deal.sheet_tab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng';
+  const tabMeta = COMMISSION_TABS.find((t) => t.name === tabName) || COMMISSION_TABS[0];
+  const rowValues = buildSheetRowForDeal(deal, tabMeta.layout);
+
+  let targetRow = deal.sheet_row ? Number(deal.sheet_row) : null;
+  if (!targetRow) {
+    const maxRowRes = await db
+      .prepare('SELECT MAX(sheet_row) as max_row FROM deals WHERE sheet_tab = ?')
+      .bind(tabMeta.name)
+      .first()
+      .catch(() => null);
+    targetRow = (Number(maxRowRes?.max_row) || 1) + 1;
+  }
+
+  let pushedToRemote = false;
+  let pushMethod = 'none';
+  let pushError = '';
+
+  // 1. Try Webhook (Google Apps Script deployed on the sheet)
+  const webhookSetting = await db
+    .prepare("SELECT value FROM settings WHERE key = 'commission_sheet_webhook'")
+    .first()
+    .catch(() => null);
+  const webhookUrl = webhookSetting?.value ? webhookSetting.value.trim() : '';
+
+  if (webhookUrl && /^https:\/\/script\.google\.com\/macros\/s\//i.test(webhookUrl)) {
+    try {
+      const resp = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          spreadsheetId,
+          tabName: tabMeta.name,
+          gid: tabMeta.gid,
+          layout: tabMeta.layout,
+          sheetRow: deal.sheet_row || null,
+          targetRow,
+          rowValues,
+          deal,
+        }),
+      });
+      if (resp.ok) {
+        const resData = await resp.json().catch(() => ({}));
+        if (resData.row) targetRow = Number(resData.row);
+        pushedToRemote = true;
+        pushMethod = 'apps_script_webhook';
+      } else {
+        pushError = `Webhook HTTP ${resp.status}`;
+      }
+    } catch (err) {
+      pushError = err.message;
+    }
+  }
+
+  // 2. Try Google Service Account (Google Sheets REST API v4)
+  if (!pushedToRemote) {
+    const saSetting = await db
+      .prepare("SELECT value FROM settings WHERE key = 'google_service_account_json'")
+      .first()
+      .catch(() => null);
+    const saJson = saSetting?.value ? saSetting.value.trim() : '';
+    if (saJson) {
+      const accessToken = await getGoogleAccessToken(saJson);
+      if (accessToken) {
+        try {
+          if (action === 'create' && !deal.sheet_row) {
+            const colAResp = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${tabMeta.name}'!A1:A500`)}`,
+              { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (colAResp.ok) {
+              const colAData = await colAResp.json();
+              const vals = colAData.values || [];
+              let firstEmpty = 2;
+              for (let r = 1; r < vals.length; r++) {
+                const cell = String(vals[r]?.[0] || '').trim();
+                if (cell) firstEmpty = r + 2;
+              }
+              targetRow = firstEmpty;
+            }
+          }
+
+          if (action === 'delete' && targetRow) {
+            const endCol = tabMeta.layout === 'ctv' ? 'L' : 'K';
+            const clearResp = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${tabMeta.name}'!A${targetRow}:${endCol}${targetRow}`)}:clear`,
+              {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+              }
+            );
+            pushedToRemote = clearResp.ok;
+            pushMethod = 'service_account';
+          } else if (targetRow) {
+            const endCol = tabMeta.layout === 'ctv' ? 'L' : 'K';
+            const putResp = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${tabMeta.name}'!A${targetRow}:${endCol}${targetRow}`)}?valueInputOption=USER_ENTERED`,
+              {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ values: [rowValues] }),
+              }
+            );
+            pushedToRemote = putResp.ok;
+            pushMethod = 'service_account';
+          }
+        } catch (err) {
+          pushError = err.message;
+        }
+      }
+    }
+  }
+
+  const sheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${tabMeta.gid}&range=${targetRow}:${targetRow}`;
+  const sheetKey = `${spreadsheetId}:${tabMeta.gid}:R${targetRow}`;
+
+  if (action !== 'delete' && deal.id) {
+    await db
+      .prepare('UPDATE deals SET sheet_tab = ?, sheet_row = ?, sheet_url = ?, sheet_key = ? WHERE id = ?')
+      .bind(tabMeta.name, targetRow, sheetUrl, sheetKey, deal.id)
+      .run()
+      .catch(() => {});
+  }
+
+  return {
+    pushed: pushedToRemote,
+    method: pushMethod,
+    error: pushError,
+    sheet_tab: tabMeta.name,
+    sheet_row: targetRow,
+    sheet_url: sheetUrl,
+    sheet_key: sheetKey,
+  };
+}
+
+async function syncCommissionSheet(db, customSpreadsheetId = '') {
+  const spreadsheetRow = await db
+    .prepare("SELECT value FROM settings WHERE key = 'commission_sheet_id'")
+    .first()
+    .catch(() => null);
+  const spreadsheetId =
+    customSpreadsheetId || spreadsheetRow?.value || DEFAULT_COMMISSION_SPREADSHEET_ID;
+
+  let added = 0;
+  let updated = 0;
+  const seenKeys = new Set();
+
+  for (const tab of COMMISSION_TABS) {
+    let rows = [];
+    try {
+      rows = await fetchPublicSheetRows(spreadsheetId, tab.name, tab.gid);
+    } catch {
+      continue;
+    }
+
+    for (let rIdx = 1; rIdx < rows.length; rIdx++) {
+      const row = rows[rIdx] || [];
+      const custName = String(row[0] || '').trim();
+      const custPhone = String(row[1] || '').trim();
+      const rawPrice = String(row[2] || '').trim();
+
+      if (!custName) continue;
+      if (/^(?:tên khách hàng|tổng cộng|bảng thống kê)/i.test(custName)) continue;
+
+      const sheetRow = rIdx + 1;
+      const sheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${tab.gid}&range=${sheetRow}:${sheetRow}`;
+      const sheetKey = `${spreadsheetId}:${tab.gid}:R${sheetRow}`;
+
+      let price = parseCommissionVnd(rawPrice);
+      let dealDate = '';
+      let sourceName = '';
+      let address = '';
+      let rate = 50;
+      let isPaid = false;
+      let amount = 0;
+      let paymentDate = '';
+      let evidenceUrl = '';
+      let moveInDate = '';
+      let note = '';
+
+      if (tab.layout === 'main') {
+        dealDate = parseCommissionDate(row[3], '', 2026);
+        sourceName = String(row[4] || '').trim();
+        address = sourceName;
+        const rawRate = String(row[5] || '').trim();
+        isPaid = String(row[6] || '').trim().toUpperCase() === 'TRUE';
+        amount = parseCommissionVnd(row[7]);
+        const parsedRate = parseFloat(rawRate.replace(',', '.').replace(/[^0-9.]/g, ''));
+        rate = Number.isFinite(parsedRate) ? parsedRate : (price > 0 && amount > 0 ? Math.round((amount / price) * 100) : 0);
+        paymentDate = String(row[8] || '').trim();
+        evidenceUrl = String(row[9] || '').trim();
+        const extraLabel = String(row[10] || '').trim();
+        const extraVal = String(row[11] || '').trim();
+        if (extraLabel || extraVal) {
+          const valNum = parseCommissionVnd(extraVal);
+          note = [extraLabel, valNum > 0 ? `${valNum.toLocaleString('vi-VN')}đ` : extraVal].filter(Boolean).join(': ');
+        }
+      } else {
+        dealDate = parseCommissionDate(row[3], row[11], 2026);
+        const rawRate = String(row[4] || '').trim();
+        isPaid = String(row[5] || '').trim().toUpperCase() === 'TRUE';
+        amount = parseCommissionVnd(row[6]);
+        const parsedRate = parseFloat(rawRate.replace(',', '.').replace(/[^0-9.]/g, ''));
+        rate = Number.isFinite(parsedRate) ? parsedRate : (price > 0 && amount > 0 ? Math.round((amount / price) * 100) : 10);
+        paymentDate = String(row[7] || '').trim();
+        address = String(row[8] || '').trim();
+        sourceName = address ? `${address} (Hiền CTV)` : 'Hiền CTV';
+        moveInDate = String(row[9] || '').trim();
+        note = String(row[10] || '').trim();
+      }
+
+      const status = isPaid ? 'da_thu' : 'cho_thu';
+      const received = isPaid ? amount : 0;
+      const roomCode = sourceName || address || 'Phòng chốt';
+      const district = detectDistrict(address || sourceName) || '';
+
+      // Find or create linked customer
+      let customer = null;
+      if (custPhone) {
+        customer = await db
+          .prepare('SELECT id FROM customers WHERE zalo_phone = ? LIMIT 1')
+          .bind(custPhone)
+          .first();
+      }
+      if (!customer) {
+        customer = await db
+          .prepare('SELECT id FROM customers WHERE LOWER(name) = LOWER(?) LIMIT 1')
+          .bind(custName)
+          .first();
+      }
+
+      let customerId = customer?.id || null;
+      if (!customerId) {
+        const cRes = await db
+          .prepare(`
+            INSERT INTO customers (
+              name, zalo_phone, status, source, deal_room_code, deal_address, deal_district,
+              deal_price, deal_date, deal_commission, deal_commission_status
+            ) VALUES (?, ?, 'da_chot', 'commission_sheet', ?, ?, ?, ?, ?, ?, ?)
+          `)
+          .bind(
+            custName,
+            custPhone,
+            roomCode,
+            address,
+            district,
+            price,
+            dealDate,
+            amount,
+            status
+          )
+          .run();
+        customerId = cRes.meta?.last_row_id;
+      }
+
+      let existingDeal = await db
+        .prepare('SELECT id FROM deals WHERE sheet_key = ? OR sheet_url = ?')
+        .bind(sheetKey, sheetUrl)
+        .first();
+
+      if (!existingDeal) {
+        existingDeal = await db
+          .prepare(
+            'SELECT id FROM deals WHERE (sheet_key IS NULL OR sheet_key = "") AND LOWER(customer_name) = LOWER(?) AND price = ? LIMIT 1'
+          )
+          .bind(custName, price)
+          .first();
+      }
+
+      if (existingDeal) {
+        await db
+          .prepare(`
+            UPDATE deals SET
+              customer_id = COALESCE(?, customer_id),
+              customer_name = ?,
+              customer_phone = ?,
+              room_code = ?,
+              address = ?,
+              district = ?,
+              source_name = ?,
+              price = ?,
+              commission_rate = ?,
+              commission_amount = ?,
+              commission_received = ?,
+              deal_date = ?,
+              move_in_date = ?,
+              commission_status = ?,
+              payment_date = ?,
+              evidence_url = ?,
+              note = ?,
+              sheet_tab = ?,
+              sheet_row = ?,
+              sheet_url = ?,
+              sheet_key = ?,
+              updated_at = datetime('now', 'localtime')
+            WHERE id = ?
+          `)
+          .bind(
+            customerId,
+            custName,
+            custPhone,
+            roomCode,
+            address,
+            district,
+            sourceName,
+            price,
+            rate,
+            amount,
+            received,
+            dealDate,
+            moveInDate,
+            status,
+            paymentDate,
+            evidenceUrl,
+            note,
+            tab.name,
+            sheetRow,
+            sheetUrl,
+            sheetKey,
+            existingDeal.id
+          )
+          .run();
+        updated++;
+      } else {
+        await db
+          .prepare(`
+            INSERT INTO deals (
+              customer_id, customer_name, customer_phone, room_code, address, district,
+              source_name, price, commission_rate, commission_amount, commission_received,
+              deal_date, move_in_date, commission_status, payment_date, evidence_url,
+              note, sheet_tab, sheet_row, sheet_url, sheet_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `)
+          .bind(
+            customerId,
+            custName,
+            custPhone,
+            roomCode,
+            address,
+            district,
+            sourceName,
+            price,
+            rate,
+            amount,
+            received,
+            dealDate,
+            moveInDate,
+            status,
+            paymentDate,
+            evidenceUrl,
+            note,
+            tab.name,
+            sheetRow,
+            sheetUrl,
+            sheetKey
+          )
+          .run();
+        added++;
+      }
+
+      seenKeys.add(sheetKey);
+    }
+  }
+
+  return {
+    ok: true,
+    spreadsheetId,
+    added,
+    updated,
+    total: added + updated,
+  };
+}
+
+function generateCommissionsCsv(deals, tabFilter = '') {
+  const isCtv = tabFilter === 'Hoa hồng Hiền ctv';
+  const headers = isCtv
+    ? [
+        'Tên khách hàng',
+        'số điện thoại',
+        'Giá phòng',
+        'thời gian chốt',
+        'Hoa hồng',
+        'Đã thanh toán',
+        'Thành Tiền',
+        'Thời Gian Thanh toán',
+        'Thông tin',
+        'Thời gian vào',
+        'Ghi chú',
+        'Tháng',
+      ]
+    : [
+        'Tên khách hàng',
+        'số điện thoại',
+        'Giá phòng',
+        'thời gian chốt',
+        'nguồn',
+        'Hoa hồng',
+        'Đã thanh toán',
+        'Thành Tiền',
+        'Thời Gian Thanh toán',
+        'bằng chứng',
+        'Ghi chú',
+        'Bảng',
+      ];
+
+  const rows = deals.map((d) => {
+    const rowVals = buildSheetRowForDeal(d, isCtv ? 'ctv' : 'main');
+    if (!isCtv) {
+      rowVals.push(d.sheet_tab || 'Hoa Hồng');
+    }
+    return rowVals;
+  });
+
+  const escapeCell = (val) => {
+    const s = String(val === null || val === undefined ? '' : val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const allLines = [headers.map(escapeCell).join(',')];
+  for (const r of rows) {
+    allLines.push(r.map(escapeCell).join(','));
+  }
+  return allLines.join('\r\n');
+}
+
 // MAIN Cloudflare Pages Function entrypoint
 export async function onRequest(context) {
   const { request, env, params } = context;
@@ -1499,12 +2120,21 @@ export async function onRequest(context) {
       if (customerId) {
         if (action === 'close-deal' && request.method === 'POST') {
           const body = await request.json().catch(() => ({}));
-          const rate = Number(body.commission_rate) || 50;
+          const cust = await db.prepare('SELECT * FROM customers WHERE id = ?').bind(customerId).first();
+          const custName = String(body.customer_name || cust?.name || 'Khách chốt').trim();
+          const custPhone = String(body.customer_phone || cust?.zalo_phone || '').trim();
+          const rate = body.commission_rate !== undefined ? Number(body.commission_rate) : 50;
           const price = Number(body.price || body.rent_price) || 0;
-          const amount = body.commission_amount ? Number(body.commission_amount) : Math.round((price * rate) / 100);
+          const amount = body.commission_amount !== undefined ? Number(body.commission_amount) : Math.round((price * rate) / 100);
           const dealDate = body.deal_date || body.closed_date || new Date().toISOString().slice(0, 10);
           const commStatus = body.commission_status || body.status || 'cho_thu';
           const received = commStatus === 'da_thu' ? amount : Number(body.commission_received || body.received_amount) || 0;
+          const sourceName = String(body.source_name || body.building_name || body.address || body.room_code || '').trim();
+          const address = String(body.address || body.building_name || sourceName || '').trim();
+          const roomCode = String(body.room_code || sourceName || '').trim();
+          const paymentDate = String(body.payment_date || (commStatus === 'da_thu' ? formatFullSheetDate(dealDate) : '')).trim();
+          const evidenceUrl = String(body.evidence_url || '').trim();
+          const sheetTab = body.sheet_tab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng';
 
           await db.prepare(`
             UPDATE customers SET
@@ -1513,21 +2143,21 @@ export async function onRequest(context) {
               deal_commission_status = ?, updated_at = datetime('now', 'localtime')
             WHERE id = ?
           `).bind(
-            body.room_id || null, body.room_code || '', body.address || '',
+            body.room_id || null, roomCode, address,
             body.district || '', price, dealDate,
             amount, commStatus, customerId
           ).run();
 
-          await db.prepare(`
+          const dealRes = await db.prepare(`
             INSERT INTO deals (
-              customer_id, room_id, room_code, address, district, price,
-              commission_rate, commission_amount, commission_received, deal_date, move_in_date,
-              commission_status, note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              customer_id, customer_name, customer_phone, room_id, room_code, address, district,
+              source_name, price, commission_rate, commission_amount, commission_received,
+              deal_date, move_in_date, commission_status, payment_date, evidence_url, note, sheet_tab
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
-            customerId, body.room_id || null, body.room_code || '', body.address || '',
-            body.district || '', price, rate, amount, received,
-            dealDate, body.move_in_date || '', commStatus, body.note || ''
+            customerId, custName, custPhone, body.room_id || null, roomCode, address,
+            body.district || '', sourceName, price, rate, amount, received,
+            dealDate, body.move_in_date || '', commStatus, paymentDate, evidenceUrl, body.note || '', sheetTab
           ).run();
 
           if (body.room_id && body.mark_room_rented) {
@@ -1535,7 +2165,29 @@ export async function onRequest(context) {
             await db.prepare("UPDATE rooms SET status = ?, status_changed_at = datetime('now', 'localtime'), updated_at = datetime('now', 'localtime') WHERE id = ?").bind(targetRoomStatus, Number(body.room_id)).run();
           }
 
-          return jsonResponse({ ok: true, customer_id: customerId });
+          const newDealId = dealRes.meta?.last_row_id;
+          const sheetPush = await pushDealToCommissionSheet(db, 'create', {
+            id: newDealId,
+            customer_id: customerId,
+            customer_name: custName,
+            customer_phone: custPhone,
+            room_code: roomCode,
+            address,
+            source_name: sourceName,
+            price,
+            commission_rate: rate,
+            commission_amount: amount,
+            commission_received: received,
+            deal_date: dealDate,
+            move_in_date: body.move_in_date || '',
+            commission_status: commStatus,
+            payment_date: paymentDate,
+            evidence_url: evidenceUrl,
+            note: body.note || '',
+            sheet_tab: sheetTab,
+          });
+
+          return jsonResponse({ ok: true, customer_id: customerId, deal_id: newDealId, sheet_push: sheetPush });
         }
 
         if (action === 'sends' && request.method === 'GET') {
@@ -1679,14 +2331,105 @@ export async function onRequest(context) {
 
     // COMMISSIONS
     if (resource === 'commissions') {
+      if (idOrSub === 'sync-sheet' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        let customId = '';
+        if (body.url || body.spreadsheet_id) {
+          const raw = String(body.url || body.spreadsheet_id).trim();
+          const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+          customId = m ? m[1] : raw;
+          if (customId) {
+            await db
+              .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('commission_sheet_id', ?)")
+              .bind(customId)
+              .run();
+          }
+        }
+        const syncRes = await syncCommissionSheet(db, customId);
+        return jsonResponse(syncRes);
+      }
+
+      if (idOrSub === 'sheet-config') {
+        if (request.method === 'GET') {
+          const sId = await db.prepare("SELECT value FROM settings WHERE key = 'commission_sheet_id'").first().catch(() => null);
+          const wh = await db.prepare("SELECT value FROM settings WHERE key = 'commission_sheet_webhook'").first().catch(() => null);
+          const sa = await db.prepare("SELECT value FROM settings WHERE key = 'google_service_account_json'").first().catch(() => null);
+          const spreadsheetId = sId?.value || DEFAULT_COMMISSION_SPREADSHEET_ID;
+          let serviceAccountEmail = '';
+          if (sa?.value) {
+            try {
+              serviceAccountEmail = JSON.parse(sa.value).client_email || '';
+            } catch {}
+          }
+          return jsonResponse({
+            spreadsheet_id: spreadsheetId,
+            sheet_url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=1437379975`,
+            webhook_url: wh?.value || '',
+            has_service_account: Boolean(serviceAccountEmail),
+            service_account_email: serviceAccountEmail,
+            tabs: COMMISSION_TABS,
+          });
+        }
+        if (request.method === 'POST' || request.method === 'PUT') {
+          const body = await request.json().catch(() => ({}));
+          if (body.spreadsheet_url || body.spreadsheet_id) {
+            const raw = String(body.spreadsheet_url || body.spreadsheet_id).trim();
+            const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+            const cleanId = m ? m[1] : raw;
+            if (cleanId) {
+              await db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('commission_sheet_id', ?)").bind(cleanId).run();
+            }
+          }
+          if (body.webhook_url !== undefined) {
+            await db
+              .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('commission_sheet_webhook', ?)")
+              .bind(String(body.webhook_url || '').trim())
+              .run();
+          }
+          if (body.service_account_json !== undefined) {
+            await db
+              .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('google_service_account_json', ?)")
+              .bind(typeof body.service_account_json === 'string' ? body.service_account_json.trim() : JSON.stringify(body.service_account_json))
+              .run();
+          }
+          return jsonResponse({ ok: true });
+        }
+      }
+
       if (idOrSub === 'stats' && request.method === 'GET') {
-        const total = await db.prepare('SELECT count(*) as count, COALESCE(SUM(commission_amount), 0) as total, COALESCE(SUM(commission_received), 0) as received FROM deals').first();
-        const pending = (total?.total || 0) - (total?.received || 0);
+        const month = url.searchParams.get('month') || '';
+        const tab = url.searchParams.get('tab') || '';
+        let sql = `
+          SELECT
+            count(*) as count,
+            COALESCE(SUM(price), 0) as total_rent,
+            COALESCE(SUM(commission_amount), 0) as total,
+            COALESCE(SUM(CASE WHEN commission_status = 'da_thu' THEN commission_amount ELSE COALESCE(commission_received, 0) END), 0) as received
+          FROM deals
+          WHERE 1=1
+        `;
+        const binds = [];
+        if (month) {
+          sql += ' AND deal_date LIKE ?';
+          binds.push(`${month}%`);
+        }
+        if (tab && tab !== 'all') {
+          sql += ' AND sheet_tab = ?';
+          binds.push(tab);
+        }
+        const total = await db.prepare(sql).bind(...binds).first();
+        const totalComm = Number(total?.total) || 0;
+        const receivedComm = Number(total?.received) || 0;
+        const pending = Math.max(0, totalComm - receivedComm);
         return jsonResponse({
-          deal_count: total?.count || 0,
-          total_commission: total?.total || 0,
-          commission_received: total?.received || 0,
-          commission_pending: pending > 0 ? pending : 0,
+          total_deals: Number(total?.count) || 0,
+          total_rent_value: Number(total?.total_rent) || 0,
+          total_commission: totalComm,
+          received_commission: receivedComm,
+          pending_commission: pending,
+          deal_count: Number(total?.count) || 0,
+          commission_received: receivedComm,
+          commission_pending: pending,
         });
       }
 
@@ -1695,42 +2438,149 @@ export async function onRequest(context) {
         if (action === 'status' && request.method === 'PATCH') {
           const body = await request.json().catch(() => ({}));
           const status = typeof body === 'string' ? body : (body.status || body.commission_status || 'cho_thu');
-          const deal = await db.prepare('SELECT * FROM deals WHERE id = ?').bind(dealId).first();
+          const deal = await db
+            .prepare(`
+              SELECT d.*, COALESCE(NULLIF(d.customer_name, ''), c.name) as resolved_customer_name,
+                     COALESCE(NULLIF(d.customer_phone, ''), c.zalo_phone) as resolved_customer_phone
+              FROM deals d
+              LEFT JOIN customers c ON d.customer_id = c.id
+              WHERE d.id = ?
+            `)
+            .bind(dealId)
+            .first();
+          if (!deal) return errorResponse('Không tìm thấy deal hoa hồng', 404);
+
           const received =
             body.received_amount !== undefined
               ? Number(body.received_amount)
               : body.commission_received !== undefined
               ? Number(body.commission_received)
               : status === 'da_thu'
-              ? (deal?.commission_amount || 0)
+              ? (deal.commission_amount || 0)
               : 0;
-          await db.prepare("UPDATE deals SET commission_status = ?, commission_received = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").bind(status, received, dealId).run();
-          if (deal?.customer_id) {
-            await db.prepare("UPDATE customers SET deal_commission_status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").bind(status, deal.customer_id).run();
+          const paymentDate =
+            body.payment_date !== undefined
+              ? String(body.payment_date)
+              : status === 'da_thu' && !deal.payment_date
+              ? formatFullSheetDate(new Date().toISOString().slice(0, 10))
+              : deal.payment_date || '';
+
+          await db
+            .prepare(
+              "UPDATE deals SET commission_status = ?, commission_received = ?, payment_date = ?, updated_at = datetime('now', 'localtime') WHERE id = ?"
+            )
+            .bind(status, received, paymentDate, dealId)
+            .run();
+          if (deal.customer_id) {
+            await db
+              .prepare("UPDATE customers SET deal_commission_status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?")
+              .bind(status, deal.customer_id)
+              .run();
           }
-          return jsonResponse({ ok: true, id: dealId, status, commission_received: received });
+
+          const updatedDeal = {
+            ...deal,
+            customer_name: deal.resolved_customer_name || deal.customer_name || '',
+            customer_phone: deal.resolved_customer_phone || deal.customer_phone || '',
+            commission_status: status,
+            commission_received: received,
+            payment_date: paymentDate,
+          };
+          const sheetPush = await pushDealToCommissionSheet(db, 'update', updatedDeal);
+          return jsonResponse({ ok: true, id: dealId, status, commission_received: received, payment_date: paymentDate, sheet_push: sheetPush });
         }
         if (request.method === 'PUT') {
           const body = await request.json().catch(() => ({}));
-          const price = Number(body.price || body.rent_price) || 0;
-          const rate = Number(body.commission_rate) || 50;
-          const amount = Number(body.commission_amount) || Math.round((price * rate) / 100);
-          const status = body.commission_status || body.status || 'cho_thu';
+          const existing = await db
+            .prepare(`
+              SELECT d.*, COALESCE(NULLIF(d.customer_name, ''), c.name) as resolved_customer_name,
+                     COALESCE(NULLIF(d.customer_phone, ''), c.zalo_phone) as resolved_customer_phone
+              FROM deals d
+              LEFT JOIN customers c ON d.customer_id = c.id
+              WHERE d.id = ?
+            `)
+            .bind(dealId)
+            .first();
+          if (!existing) return errorResponse('Không tìm thấy deal hoa hồng', 404);
+
+          const price = body.price !== undefined || body.rent_price !== undefined ? (Number(body.price ?? body.rent_price) || 0) : existing.price;
+          const rate = body.commission_rate !== undefined ? Number(body.commission_rate) : existing.commission_rate;
+          const amount =
+            body.commission_amount !== undefined
+              ? Number(body.commission_amount)
+              : Math.round((price * rate) / 100);
+          const status = body.commission_status || body.status || existing.commission_status || 'cho_thu';
           const received = Number(body.commission_received ?? body.received_amount ?? (status === 'da_thu' ? amount : 0)) || 0;
-          await db.prepare(`
-            UPDATE deals SET
-              price = ?, commission_rate = ?, commission_amount = ?, commission_received = ?,
-              commission_status = ?, deal_date = ?, move_in_date = ?, note = ?,
-              updated_at = datetime('now', 'localtime')
-            WHERE id = ?
-          `).bind(
-            price, rate, amount, received,
-            status, body.deal_date || body.closed_date || '', body.move_in_date || '', body.note || '', dealId
-          ).run();
-          return jsonResponse({ ok: true, id: dealId });
+          const dealDate = body.deal_date || body.closed_date || existing.deal_date || '';
+          const moveInDate = body.move_in_date !== undefined ? String(body.move_in_date) : (existing.move_in_date || '');
+          const note = body.note !== undefined ? String(body.note) : (existing.note || '');
+          const custName = body.customer_name !== undefined ? String(body.customer_name).trim() : (existing.resolved_customer_name || '');
+          const custPhone = body.customer_phone !== undefined ? String(body.customer_phone).trim() : (existing.resolved_customer_phone || '');
+          const sourceName = body.source_name !== undefined ? String(body.source_name).trim() : (body.building_name !== undefined ? String(body.building_name).trim() : (existing.source_name || existing.address || ''));
+          const address = body.address !== undefined ? String(body.address).trim() : (sourceName || existing.address || '');
+          const roomCode = body.room_code !== undefined ? String(body.room_code).trim() : (existing.room_code || sourceName || '');
+          const paymentDate =
+            body.payment_date !== undefined
+              ? String(body.payment_date).trim()
+              : status === 'da_thu' && !existing.payment_date
+              ? formatFullSheetDate(new Date().toISOString().slice(0, 10))
+              : (existing.payment_date || '');
+          const evidenceUrl = body.evidence_url !== undefined ? String(body.evidence_url).trim() : (existing.evidence_url || '');
+          const sheetTab = body.sheet_tab || existing.sheet_tab || 'Hoa Hồng';
+
+          await db
+            .prepare(`
+              UPDATE deals SET
+                customer_name = ?, customer_phone = ?, room_code = ?, address = ?, source_name = ?,
+                price = ?, commission_rate = ?, commission_amount = ?, commission_received = ?,
+                commission_status = ?, deal_date = ?, move_in_date = ?, payment_date = ?,
+                evidence_url = ?, note = ?, sheet_tab = ?,
+                updated_at = datetime('now', 'localtime')
+              WHERE id = ?
+            `)
+            .bind(
+              custName, custPhone, roomCode, address, sourceName,
+              price, rate, amount, received,
+              status, dealDate, moveInDate, paymentDate,
+              evidenceUrl, note, sheetTab, dealId
+            )
+            .run();
+
+          if (existing.customer_id && (body.customer_name || body.customer_phone)) {
+            await db
+              .prepare("UPDATE customers SET name = COALESCE(NULLIF(?, ''), name), zalo_phone = COALESCE(NULLIF(?, ''), zalo_phone) WHERE id = ?")
+              .bind(custName, custPhone, existing.customer_id)
+              .run();
+          }
+
+          const updatedDeal = {
+            ...existing,
+            id: dealId,
+            customer_name: custName,
+            customer_phone: custPhone,
+            room_code: roomCode,
+            address,
+            source_name: sourceName,
+            price,
+            commission_rate: rate,
+            commission_amount: amount,
+            commission_received: received,
+            commission_status: status,
+            deal_date: dealDate,
+            move_in_date: moveInDate,
+            payment_date: paymentDate,
+            evidence_url: evidenceUrl,
+            note,
+            sheet_tab: sheetTab,
+          };
+          const sheetPush = await pushDealToCommissionSheet(db, 'update', updatedDeal);
+          return jsonResponse({ ok: true, id: dealId, deal: { ...updatedDeal, ...sheetPush }, sheet_push: sheetPush });
         }
         if (request.method === 'DELETE') {
-          const deal = await db.prepare('SELECT customer_id FROM deals WHERE id = ?').bind(dealId).first();
+          const deal = await db.prepare('SELECT * FROM deals WHERE id = ?').bind(dealId).first();
+          if (deal) {
+            await pushDealToCommissionSheet(db, 'delete', deal);
+          }
           await db.prepare('DELETE FROM deals WHERE id = ?').bind(dealId).run();
           if (deal?.customer_id) {
             await db.prepare("UPDATE customers SET deal_room_id = NULL, deal_room_code = '', deal_address = '', deal_price = 0, deal_commission = 0 WHERE id = ?").bind(deal.customer_id).run();
@@ -1740,43 +2590,98 @@ export async function onRequest(context) {
       }
 
       if (request.method === 'GET') {
-        const deals = await db.prepare(`
-          SELECT d.*, c.name as customer_name, c.zalo_phone as customer_phone
+        const month = url.searchParams.get('month') || '';
+        const status = url.searchParams.get('status') || '';
+        const tab = url.searchParams.get('tab') || '';
+        const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+
+        let sql = `
+          SELECT
+            d.*,
+            COALESCE(NULLIF(d.customer_name, ''), c.name) as customer_name,
+            COALESCE(NULLIF(d.customer_phone, ''), c.zalo_phone) as customer_phone
           FROM deals d
           LEFT JOIN customers c ON d.customer_id = c.id
-          ORDER BY d.deal_date DESC, d.id DESC
-        `).all();
-        return jsonResponse(deals.results || []);
+          WHERE 1=1
+        `;
+        const binds = [];
+        if (month) {
+          sql += ' AND d.deal_date LIKE ?';
+          binds.push(`${month}%`);
+        }
+        if (status && status !== 'all') {
+          sql += ' AND d.commission_status = ?';
+          binds.push(status);
+        }
+        if (tab && tab !== 'all') {
+          sql += ' AND d.sheet_tab = ?';
+          binds.push(tab);
+        }
+        sql += ' ORDER BY COALESCE(d.sheet_row, 999999) ASC, d.deal_date DESC, d.id DESC';
+
+        const dealsRes = await db.prepare(sql).bind(...binds).all();
+        let list = dealsRes.results || [];
+        if (q) {
+          list = list.filter((item) => {
+            const hay = [
+              item.customer_name,
+              item.customer_phone,
+              item.source_name,
+              item.room_code,
+              item.address,
+              item.district,
+              item.note,
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase();
+            return hay.includes(q);
+          });
+        }
+        return jsonResponse(list);
       }
 
       if (request.method === 'POST') {
         const body = await request.json().catch(() => ({}));
+        const custName = String(body.customer_name || 'Khách chốt phòng').trim();
+        const custPhone = String(body.customer_phone || body.customer_zalo || body.zalo_phone || '').trim();
         let customerId = body.customer_id ? Number(body.customer_id) : null;
-        if (!customerId && body.customer_name) {
+        if (!customerId && custName) {
           const cRes = await db.prepare(
             "INSERT INTO customers (name, zalo_phone, status, source) VALUES (?, ?, 'da_chot', 'manual')"
-          ).bind(String(body.customer_name).trim(), String(body.customer_phone || '').trim()).run();
+          ).bind(custName, custPhone).run();
           customerId = cRes.meta?.last_row_id;
         }
 
         const price = Number(body.price || body.rent_price) || 0;
-        const rate = Number(body.commission_rate) || 50;
-        const amount = Number(body.commission_amount) || Math.round((price * rate) / 100);
+        const rate = body.commission_rate !== undefined ? Number(body.commission_rate) : 50;
+        const amount = body.commission_amount !== undefined ? Number(body.commission_amount) : Math.round((price * rate) / 100);
         const dealDate = body.deal_date || body.closed_date || new Date().toISOString().slice(0, 10);
         const status = body.commission_status || body.status || 'cho_thu';
         const received = Number(body.commission_received ?? body.received_amount ?? (status === 'da_thu' ? amount : 0)) || 0;
+        const sourceName = String(body.source_name || body.building_name || body.address || body.room_code || '').trim();
+        const address = String(body.address || body.building_name || sourceName || '').trim();
+        const roomCode = String(body.room_code || sourceName || '').trim();
+        const paymentDate = String(
+          body.payment_date || (status === 'da_thu' ? formatFullSheetDate(dealDate) : '')
+        ).trim();
+        const evidenceUrl = String(body.evidence_url || '').trim();
+        const sheetTab = body.sheet_tab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng';
+        const note = String(body.note || '').trim();
 
         const res = await db.prepare(`
           INSERT INTO deals (
-            customer_id, room_id, room_code, address, district, price,
-            commission_rate, commission_amount, commission_received, deal_date, move_in_date,
-            commission_status, note
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            customer_id, customer_name, customer_phone, room_id, room_code, address, district,
+            source_name, price, commission_rate, commission_amount, commission_received,
+            deal_date, move_in_date, commission_status, payment_date, evidence_url, note, sheet_tab
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
-          customerId, body.room_id || null, body.room_code || '', body.address || body.building_name || '',
-          body.district || '', price, rate, amount, received,
-          dealDate, body.move_in_date || '', status, body.note || ''
+          customerId, custName, custPhone, body.room_id || null, roomCode, address,
+          body.district || '', sourceName, price, rate, amount, received,
+          dealDate, body.move_in_date || '', status, paymentDate, evidenceUrl, note, sheetTab
         ).run();
+
+        const newDealId = res.meta?.last_row_id;
 
         if (customerId) {
           await db.prepare(`
@@ -1786,12 +2691,47 @@ export async function onRequest(context) {
               deal_commission_status = ?, updated_at = datetime('now', 'localtime')
             WHERE id = ?
           `).bind(
-            body.room_id || null, body.room_code || '', body.address || body.building_name || '',
+            body.room_id || null, roomCode, address,
             body.district || '', price, dealDate, amount, status, customerId
           ).run();
         }
 
-        return jsonResponse({ ok: true, id: res.meta?.last_row_id }, 201);
+        const newDealObj = {
+          id: newDealId,
+          customer_id: customerId,
+          customer_name: custName,
+          customer_phone: custPhone,
+          room_id: body.room_id || null,
+          room_code: roomCode,
+          address,
+          district: body.district || '',
+          source_name: sourceName,
+          price,
+          commission_rate: rate,
+          commission_amount: amount,
+          commission_received: received,
+          deal_date: dealDate,
+          move_in_date: body.move_in_date || '',
+          commission_status: status,
+          payment_date: paymentDate,
+          evidence_url: evidenceUrl,
+          note,
+          sheet_tab: sheetTab,
+        };
+
+        const sheetPush = await pushDealToCommissionSheet(db, 'create', newDealObj);
+
+        return jsonResponse({
+          ok: true,
+          id: newDealId,
+          deal: {
+            ...newDealObj,
+            sheet_row: sheetPush.sheet_row,
+            sheet_url: sheetPush.sheet_url,
+            sheet_key: sheetPush.sheet_key,
+          },
+          sheet_push: sheetPush,
+        }, 201);
       }
     }
 
@@ -1942,6 +2882,34 @@ export async function onRequest(context) {
         const customersRes = await db.prepare('SELECT * FROM customers ORDER BY id DESC').all();
         const customers = customersRes.results || [];
         const csvContent = generateCustomersCsv(customers);
+        return new Response('\uFEFF' + csvContent, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+          },
+        });
+      }
+
+      if (idOrSub === 'commissions.csv' && request.method === 'GET') {
+        const tab = url.searchParams.get('tab') || '';
+        let sql = `
+          SELECT
+            d.*,
+            COALESCE(NULLIF(d.customer_name, ''), c.name) as customer_name,
+            COALESCE(NULLIF(d.customer_phone, ''), c.zalo_phone) as customer_phone
+          FROM deals d
+          LEFT JOIN customers c ON d.customer_id = c.id
+        `;
+        const binds = [];
+        if (tab && tab !== 'all') {
+          sql += ' WHERE d.sheet_tab = ?';
+          binds.push(tab);
+        }
+        sql += ' ORDER BY COALESCE(d.sheet_row, 999999) ASC, d.deal_date ASC, d.id ASC';
+        const dealsRes = await db.prepare(sql).bind(...binds).all();
+        const csvContent = generateCommissionsCsv(dealsRes.results || [], tab);
         return new Response('\uFEFF' + csvContent, {
           status: 200,
           headers: {
