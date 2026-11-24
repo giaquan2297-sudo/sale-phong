@@ -1244,12 +1244,13 @@ async function getGoogleAccessToken(saJsonStr) {
 function buildSheetRowForDeal(deal, layout = 'main') {
   const custName = deal.customer_name || '';
   const custPhone = deal.customer_phone || '';
-  const priceStr = Number(deal.price || 0).toLocaleString('vi-VN');
-  const shortDate = formatShortSheetDate(deal.deal_date);
+  const priceNum = Number(deal.price || 0);
+  const fullDate = formatFullSheetDate(deal.deal_date);
   const sourceOrAddress = deal.source_name || deal.address || deal.room_code || '';
-  const rateStr = `${Number(deal.commission_rate ?? 50)}%`;
+  const rateNum = Number(deal.commission_rate ?? 50);
+  const rateStr = `${rateNum}%`;
   const isPaid = deal.commission_status === 'da_thu';
-  const amountStr = Number(deal.commission_amount || 0).toLocaleString('vi-VN');
+  const amountNum = Number(deal.commission_amount || 0);
   const payDate =
     deal.payment_date || (isPaid ? formatFullSheetDate(deal.deal_date) : '');
   const evidence = deal.evidence_url || '';
@@ -1259,11 +1260,11 @@ function buildSheetRowForDeal(deal, layout = 'main') {
     return [
       custName,
       custPhone,
-      priceStr,
-      shortDate,
+      priceNum,
+      fullDate,
       rateStr,
       isPaid ? 'TRUE' : 'FALSE',
-      amountStr,
+      amountNum,
       payDate,
       sourceOrAddress,
       deal.move_in_date || '',
@@ -1275,12 +1276,12 @@ function buildSheetRowForDeal(deal, layout = 'main') {
   return [
     custName,
     custPhone,
-    priceStr,
-    shortDate,
+    priceNum,
+    fullDate,
     sourceOrAddress,
     rateStr,
     isPaid ? 'TRUE' : 'FALSE',
-    amountStr,
+    amountNum,
     payDate,
     evidence,
     note,
@@ -2937,6 +2938,80 @@ export async function onRequest(context) {
         const dealsRes = await db.prepare(sql).bind(...binds).all();
         const csvContent = generateCommissionsCsv(dealsRes.results || [], tab);
         return new Response('\uFEFF' + csvContent, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+          },
+        });
+      }
+
+      if (idOrSub === 'commissions-new.csv' && request.method === 'GET') {
+        const tabParam = url.searchParams.get('tab') || 'main';
+        const partParam = url.searchParams.get('part') || 'af';
+        const isCtv = tabParam === 'ctv' || tabParam === 'Hoa hồng Hiền ctv';
+        const targetTab = isCtv ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng';
+        const minRow = isCtv ? 12 : 19;
+
+        const dealsRes = await db
+          .prepare(`
+            SELECT
+              d.*,
+              COALESCE(NULLIF(d.customer_name, ''), c.name) as customer_name,
+              COALESCE(NULLIF(d.customer_phone, ''), c.zalo_phone) as customer_phone
+            FROM deals d
+            LEFT JOIN customers c ON d.customer_id = c.id
+            WHERE d.sheet_tab = ? AND COALESCE(d.sheet_row, 999999) >= ?
+            ORDER BY COALESCE(d.sheet_row, 999999) ASC, d.id ASC
+          `)
+          .bind(targetTab, minRow)
+          .all();
+
+        const rows = dealsRes.results || [];
+        if (rows.length === 0) {
+          return new Response('', {
+            status: 404,
+            headers: {
+              'Access-Control-Allow-Origin': '*',
+              'Cache-Control': 'no-cache',
+            },
+          });
+        }
+
+        const escapeCell = (val) => {
+          const s = String(val === null || val === undefined ? '' : val);
+          if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+            return `"${s.replace(/"/g, '""')}"`;
+          }
+          return s;
+        };
+
+        const csvLines = rows.map((d) => {
+          const phone = d.customer_phone ? `'${d.customer_phone}` : '';
+          const priceNum = Number(d.price || 0);
+          const fullDate = formatFullSheetDate(d.deal_date);
+          const src = d.source_name || d.address || d.room_code || '';
+          const rateDec = String((Number(d.commission_rate ?? (isCtv ? 10 : 50)) / 100)).replace('.', ',');
+          const isPaid = d.commission_status === 'da_thu';
+          const payDate = d.payment_date || (isPaid ? fullDate : '');
+          const evidence = d.evidence_url || '';
+          const note = d.note || '';
+
+          if (isCtv) {
+            if (partParam === 'hk') {
+              return [payDate, src, d.move_in_date || '', note].map(escapeCell).join(',');
+            }
+            return [d.customer_name || '', phone, priceNum, fullDate, rateDec].map(escapeCell).join(',');
+          }
+
+          if (partParam === 'ij') {
+            return [payDate, evidence, note].map(escapeCell).join(',');
+          }
+          return [d.customer_name || '', phone, priceNum, fullDate, src, rateDec].map(escapeCell).join(',');
+        });
+
+        return new Response('\uFEFF' + csvLines.join('\r\n'), {
           status: 200,
           headers: {
             'Content-Type': 'text/csv; charset=utf-8',

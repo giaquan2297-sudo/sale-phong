@@ -47,13 +47,16 @@ const APPS_SCRIPT_CODE = `function doPost(e) {
   }
 
   if (action === 'delete' && targetRow >= 2) {
-    sheet.getRange(targetRow, 1, 1, rowVals.length || 11).clearContent();
+    sheet.getRange(targetRow, 1, 1, 6).clearContent();
+    sheet.getRange(targetRow, 9, 1, 3).clearContent();
   } else if (rowVals.length > 0 && targetRow >= 2) {
     for (var c = 0; c < rowVals.length; c++) {
+      var cell = sheet.getRange(targetRow, c + 1);
+      if (cell.getFormula() && Number(payload.deal && payload.deal.commission_rate) > 0) continue;
       var val = rowVals[c];
       if (val === 'TRUE' || val === true) val = true;
       else if (val === 'FALSE' || val === false) val = false;
-      sheet.getRange(targetRow, c + 1).setValue(val);
+      cell.setValue(val);
     }
   }
 
