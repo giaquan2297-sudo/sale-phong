@@ -260,6 +260,13 @@ async function ensureSchema(db) {
   } catch {}
 
   try {
+    await db.prepare(`
+      DELETE FROM deals
+      WHERE sheet_key IS NOT NULL AND sheet_key != ''
+        AND id NOT IN (
+          SELECT MIN(id) FROM deals WHERE sheet_key IS NOT NULL AND sheet_key != '' GROUP BY sheet_key
+        )
+    `).run();
     const sheetDealsCount = await db.prepare('SELECT count(*) as count FROM deals WHERE sheet_key IS NOT NULL').first();
     if (!sheetDealsCount || sheetDealsCount.count === 0) {
       await syncCommissionSheet(db);
@@ -1651,6 +1658,25 @@ async function syncCommissionSheet(db, customSpreadsheetId = '') {
       seenKeys.add(sheetKey);
     }
   }
+
+  // Deduplicate any concurrent sheet_key rows
+  try {
+    await db.prepare(`
+      DELETE FROM deals
+      WHERE sheet_key IS NOT NULL AND sheet_key != ''
+        AND id NOT IN (
+          SELECT MIN(id) FROM deals WHERE sheet_key IS NOT NULL AND sheet_key != '' GROUP BY sheet_key
+        )
+    `).run();
+
+    await db.prepare(`
+      DELETE FROM customers
+      WHERE source = 'commission_sheet'
+        AND id NOT IN (
+          SELECT MIN(id) FROM customers WHERE source = 'commission_sheet' GROUP BY LOWER(name), zalo_phone
+        )
+    `).run();
+  } catch {}
 
   return {
     ok: true,
