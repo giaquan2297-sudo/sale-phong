@@ -16,7 +16,6 @@ import {
   FileSpreadsheet,
   Copy,
   Check,
-  FolderOpen,
   Link2,
 } from 'lucide-react';
 import { api } from '../api/client';
@@ -27,11 +26,12 @@ import { useEscapeKey } from '../hooks/useEscapeKey';
 import DealClosingModal from '../components/DealClosingModal';
 
 const DEFAULT_SHEET_ID = '1rKFwKPXMBwN5vvt-gUiCgHTzuRmlN7LiF7VGYNf8gCI';
+const HIEN_CTV_GID = '153848228';
 
 const APPS_SCRIPT_CODE = `function doPost(e) {
   var payload = JSON.parse(e.postData.contents);
   var ss = SpreadsheetApp.openById(payload.spreadsheetId || '${DEFAULT_SHEET_ID}');
-  var sheet = ss.getSheetByName(payload.tabName || 'Hoa Hồng') || ss.getSheets()[1];
+  var sheet = ss.getSheetByName('Hoa hồng Hiền ctv');
   var action = payload.action || 'create';
   var rowVals = payload.rowValues || [];
   var targetRow = payload.sheetRow ? Number(payload.sheetRow) : 0;
@@ -47,12 +47,12 @@ const APPS_SCRIPT_CODE = `function doPost(e) {
   }
 
   if (action === 'delete' && targetRow >= 2) {
-    sheet.getRange(targetRow, 1, 1, 6).clearContent();
-    sheet.getRange(targetRow, 9, 1, 3).clearContent();
+    sheet.getRange(targetRow, 1, 1, 5).clearContent();
+    sheet.getRange(targetRow, 8, 1, 4).clearContent();
   } else if (rowVals.length > 0 && targetRow >= 2) {
     for (var c = 0; c < rowVals.length; c++) {
       var cell = sheet.getRange(targetRow, c + 1);
-      if (cell.getFormula() && Number(payload.deal && payload.deal.commission_rate) > 0) continue;
+      if (cell.getFormula()) continue;
       var val = rowVals[c];
       if (val === 'TRUE' || val === true) val = true;
       else if (val === 'FALSE' || val === false) val = false;
@@ -76,11 +76,17 @@ function getRecentMonths() {
   return months;
 }
 
+function getMonthBadge(dealDate) {
+  if (!dealDate) return '—';
+  const m = String(dealDate).match(/^(\d{4})-(\d{2})/);
+  if (m) return `Tháng ${m[2]}/${m[1]}`;
+  return dealDate;
+}
+
 export default function CommissionsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
 
-  const [selectedTab, setSelectedTab] = useState('all'); // 'all' | 'Hoa Hồng' | 'Hoa hồng Hiền ctv'
   const [selectedMonth, setSelectedMonth] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -97,14 +103,13 @@ export default function CommissionsPage() {
     customer_phone: '',
     source_name: '',
     price: '',
-    commission_rate: 50,
+    commission_rate: 10,
     commission_amount: '',
     deal_date: '',
+    move_in_date: '',
     commission_status: 'cho_thu',
     commission_received: 0,
     payment_date: '',
-    evidence_url: '',
-    sheet_tab: 'Hoa Hồng',
     note: '',
   });
 
@@ -125,7 +130,7 @@ export default function CommissionsPage() {
     }
   }, [sheetConfig]);
 
-  // Fetch all commissions so we can compute tab counts and filter reactively
+  // Fetch commissions from Hoa hồng Hiền ctv
   const { data: allCommissions = [], isLoading } = useQuery({
     queryKey: ['commissions', selectedMonth],
     queryFn: () =>
@@ -134,19 +139,8 @@ export default function CommissionsPage() {
       }),
   });
 
-  const tabCounts = useMemo(() => {
-    const counts = { all: allCommissions.length, main: 0, ctv: 0 };
-    allCommissions.forEach((d) => {
-      if (d.sheet_tab === 'Hoa hồng Hiền ctv') counts.ctv++;
-      else counts.main++;
-    });
-    return counts;
-  }, [allCommissions]);
-
   const commissions = useMemo(() => {
     return allCommissions.filter((d) => {
-      const dTab = d.sheet_tab || 'Hoa Hồng';
-      if (selectedTab !== 'all' && dTab !== selectedTab) return false;
       const st = d.commission_status || d.status || 'cho_thu';
       if (selectedStatus !== 'all' && st !== selectedStatus) return false;
       if (searchQuery.trim()) {
@@ -168,22 +162,16 @@ export default function CommissionsPage() {
       }
       return true;
     });
-  }, [allCommissions, selectedTab, selectedStatus, searchQuery]);
+  }, [allCommissions, selectedStatus, searchQuery]);
 
-  // Compute live stats matching current tab and month filter
+  // Compute live stats matching Hoa hồng Hiền ctv
   const stats = useMemo(() => {
-    const baseList = allCommissions.filter((d) => {
-      const dTab = d.sheet_tab || 'Hoa Hồng';
-      if (selectedTab !== 'all' && dTab !== selectedTab) return false;
-      return true;
-    });
-
-    let totalDeals = baseList.length;
+    let totalDeals = allCommissions.length;
     let totalRent = 0;
     let totalComm = 0;
     let receivedComm = 0;
 
-    baseList.forEach((d) => {
+    allCommissions.forEach((d) => {
       const p = Number(d.price || d.rent_price) || 0;
       const c = Number(d.commission_amount) || 0;
       const st = d.commission_status || d.status;
@@ -201,7 +189,7 @@ export default function CommissionsPage() {
       received_commission: receivedComm,
       pending_commission: Math.max(0, totalComm - receivedComm),
     };
-  }, [allCommissions, selectedTab]);
+  }, [allCommissions]);
 
   // Sync from Google Sheet
   const syncSheetMutation = useMutation({
@@ -211,7 +199,7 @@ export default function CommissionsPage() {
       queryClient.invalidateQueries({ queryKey: ['commission-stats'] });
       queryClient.invalidateQueries({ queryKey: ['customers'] });
       toast(
-        `Đã đồng bộ Bảng Hoa Hồng từ Google Sheet (${res?.total || 0} giao dịch: +${res?.added || 0} mới, ${res?.updated || 0} cập nhật)!`
+        `Đã đồng bộ bảng "Hoa hồng Hiền ctv" từ Google Sheet (${res?.total || 0} giao dịch)!`
       );
     },
     onError: (err) => toast(err.message || 'Lỗi đồng bộ Google Sheet', 'error'),
@@ -240,15 +228,11 @@ export default function CommissionsPage() {
         payment_date: payDate,
       });
     },
-    onSuccess: (res) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['commissions'] });
       queryClient.invalidateQueries({ queryKey: ['commission-stats'] });
       queryClient.invalidateQueries({ queryKey: ['customers'] });
-      if (res?.sheet_push?.pushed) {
-        toast('Đã đánh dấu Đã thanh toán và tự động tích TRUE trên Google Sheet!');
-      } else {
-        toast('Đã cập nhật trạng thái: Đã nhận đủ hoa hồng!');
-      }
+      toast('Đã cập nhật trạng thái: Đã thanh toán hoa hồng!');
     },
     onError: (err) => toast(err.message, 'error'),
   });
@@ -268,16 +252,12 @@ export default function CommissionsPage() {
   // Update commission form
   const updateMutation = useMutation({
     mutationFn: (payload) => api.updateCommission(editingDeal.id, payload),
-    onSuccess: (res) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['commissions'] });
       queryClient.invalidateQueries({ queryKey: ['commission-stats'] });
       queryClient.invalidateQueries({ queryKey: ['customers'] });
       setEditingDeal(null);
-      if (res?.sheet_push?.pushed) {
-        toast(`Đã cập nhật deal và tự động ghi lên dòng ${res.sheet_push.sheet_row} Google Sheet!`);
-      } else {
-        toast('Đã cập nhật thông tin deal hoa hồng');
-      }
+      toast('Đã cập nhật thông tin deal hoa hồng');
     },
     onError: (err) => toast(err.message, 'error'),
   });
@@ -289,14 +269,13 @@ export default function CommissionsPage() {
       customer_phone: deal.customer_phone || deal.customer_zalo || '',
       source_name: deal.source_name || deal.address || deal.room_code || '',
       price: String(deal.price || deal.rent_price || 0),
-      commission_rate: deal.commission_rate !== undefined ? Number(deal.commission_rate) : 50,
+      commission_rate: deal.commission_rate !== undefined ? Number(deal.commission_rate) : 10,
       commission_amount: String(deal.commission_amount || 0),
       deal_date: deal.deal_date || deal.closed_date || '',
+      move_in_date: deal.move_in_date || '',
       commission_status: deal.commission_status || deal.status || 'cho_thu',
       commission_received: Number(deal.commission_received || deal.received_amount || 0),
       payment_date: deal.payment_date || '',
-      evidence_url: deal.evidence_url || '',
-      sheet_tab: deal.sheet_tab || 'Hoa Hồng',
       note: deal.note || '',
     });
   };
@@ -321,9 +300,8 @@ export default function CommissionsPage() {
     }));
   };
 
-  const activeGid = selectedTab === 'Hoa hồng Hiền ctv' ? '153848228' : '1437379975';
   const sheetId = sheetConfig?.spreadsheet_id || DEFAULT_SHEET_ID;
-  const currentSheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${activeGid}`;
+  const currentSheetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${HIEN_CTV_GID}`;
 
   const copyText = async (text, key, msg) => {
     try {
@@ -335,13 +313,6 @@ export default function CommissionsPage() {
       toast(text);
     }
   };
-
-  const origin =
-    typeof window !== 'undefined' && window.location.origin
-      ? window.location.origin
-      : 'https://sale-tro-hanoi.pages.dev';
-  const importFormulaMain = `=IMPORTDATA("${origin}/api/public/commissions.csv?tab=Hoa%20H%E1%BB%93ng")`;
-  const importFormulaAll = `=IMPORTDATA("${origin}/api/public/commissions.csv")`;
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-5">
@@ -355,7 +326,7 @@ export default function CommissionsPage() {
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight">
-                  Bảng Tổng Hợp Hoa Hồng
+                  Bảng Hoa Hồng Hiền CTV
                 </h2>
                 <a
                   href={currentSheetUrl}
@@ -364,13 +335,12 @@ export default function CommissionsPage() {
                   className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 transition-colors"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Đã liên kết Google Sheet</span>
+                  <span>Đã liên kết tab Hoa hồng Hiền ctv</span>
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
               <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                Đồng bộ trực tiếp với trang tính <strong>Hoa Hồng</strong> &{' '}
-                <strong>Hoa hồng Hiền ctv</strong> — tự động thêm vào link Sheet khi nhập deal mới
+                Đồng bộ 2 chiều với trang tính <strong>Hoa hồng Hiền ctv</strong> — khi nhập deal mới sẽ tự động thêm vào dòng tiếp theo trên Sheet
               </p>
             </div>
           </div>
@@ -403,7 +373,7 @@ export default function CommissionsPage() {
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-900 text-xs sm:text-sm font-semibold transition-colors"
           >
             <Link2 className="w-4 h-4 text-teal-700" />
-            <span>Tự động ghi Sheet</span>
+            <span>Cấu hình Sheet</span>
           </button>
 
           <button
@@ -417,46 +387,6 @@ export default function CommissionsPage() {
         </div>
       </div>
 
-      {/* Sheet Tab Switcher */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-3">
-        <button
-          type="button"
-          onClick={() => setSelectedTab('all')}
-          className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all inline-flex items-center gap-2 ${
-            selectedTab === 'all'
-              ? 'bg-[#0D6E6E] text-white shadow-xs'
-              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-          }`}
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          <span>Tất cả các bảng ({tabCounts.all})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSelectedTab('Hoa Hồng')}
-          className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all inline-flex items-center gap-2 ${
-            selectedTab === 'Hoa Hồng'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-          }`}
-        >
-          <span>Bảng Hoa Hồng chính ({tabCounts.main})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSelectedTab('Hoa hồng Hiền ctv')}
-          className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all inline-flex items-center gap-2 ${
-            selectedTab === 'Hoa hồng Hiền ctv'
-              ? 'bg-teal-600 text-white shadow-xs'
-              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-          }`}
-        >
-          <span>Hoa hồng Hiền CTV ({tabCounts.ctv})</span>
-        </button>
-      </div>
-
       {/* Top KPI Cards (5 cards) */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs relative overflow-hidden">
@@ -468,13 +398,13 @@ export default function CommissionsPage() {
             <span className="text-xs font-semibold text-slate-400 ml-1">giao dịch</span>
           </div>
           <div className="text-[11px] text-slate-400 mt-1">
-            {selectedTab === 'all' ? 'Tất cả bảng' : selectedTab}
+            {selectedMonth ? `Tháng ${selectedMonth}` : 'Hoa hồng Hiền ctv'}
           </div>
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-            <span>💵 Tổng doanh số phòng</span>
+            <span>💵 Tổng doanh số</span>
           </div>
           <div className="mt-2 text-2xl font-black text-slate-900 tracking-tight truncate">
             {formatPrice(stats.total_rent_value || 0)}
@@ -510,7 +440,7 @@ export default function CommissionsPage() {
 
         <div className="col-span-2 lg:col-span-1 bg-white rounded-xl border border-amber-200 bg-gradient-to-br from-white to-amber-50/30 p-4 shadow-xs relative overflow-hidden">
           <div className="flex items-center justify-between text-amber-700 text-xs font-medium">
-            <span>⏳ Số tiền chưa nhận</span>
+            <span>⏳ Hoa hồng chưa nhận</span>
           </div>
           <div className="mt-2 text-2xl font-black text-amber-700 tracking-tight truncate">
             {formatPrice(stats.pending_commission || 0)}
@@ -562,7 +492,7 @@ export default function CommissionsPage() {
               }`}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              <span>Chưa nhận</span>
+              <span>Chưa thanh toán</span>
             </button>
             <button
               type="button"
@@ -583,7 +513,7 @@ export default function CommissionsPage() {
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
             type="text"
-            placeholder="Tìm theo tên khách, SĐT, nguồn, địa chỉ..."
+            placeholder="Tìm theo tên khách, SĐT, thông tin phòng..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white focus:outline-none focus:border-[#0D6E6E]"
@@ -600,7 +530,7 @@ export default function CommissionsPage() {
         </div>
       </div>
 
-      {/* Main Commission Table matching Google Sheet columns */}
+      {/* Main Commission Table matching "Hoa hồng Hiền ctv" columns */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
@@ -610,24 +540,25 @@ export default function CommissionsPage() {
                 <th className="py-3.5 px-3.5 whitespace-nowrap">Số điện thoại</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap text-right">Giá phòng</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">Thời gian chốt</th>
-                <th className="py-3.5 px-3.5 whitespace-nowrap">Nguồn / Địa chỉ</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap text-center">Hoa hồng</th>
-                <th className="py-3.5 px-3.5 whitespace-nowrap text-right">Thành Tiền</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap text-center">Đã thanh toán</th>
-                <th className="py-3.5 px-3.5 whitespace-nowrap">Bằng chứng & Ghi chú</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap text-right">Thành Tiền</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">Thông tin</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">Thời gian vào</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">Ghi chú / Tháng</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap text-right">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {isLoading ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400 text-sm">
-                    Đang tải dữ liệu hoa hồng từ Google Sheet...
+                  <td colSpan={11} className="py-12 text-center text-slate-400 text-sm">
+                    Đang tải dữ liệu từ bảng Hoa hồng Hiền ctv...
                   </td>
                 </tr>
               ) : commissions.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center space-y-3">
+                  <td colSpan={11} className="py-12 text-center space-y-3">
                     <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
                       <Coins className="w-6 h-6" />
                     </div>
@@ -661,33 +592,21 @@ export default function CommissionsPage() {
                   const stMeta = COMMISSION_STATUS_MAP[statusKey] || COMMISSION_STATUSES[0];
                   const price = Number(deal.price || deal.rent_price) || 0;
                   const comm = Number(deal.commission_amount) || 0;
-                  const rateVal = deal.commission_rate !== undefined ? Number(deal.commission_rate) : 50;
+                  const rateVal = deal.commission_rate !== undefined ? Number(deal.commission_rate) : 10;
                   const isReceived = statusKey === 'da_thu';
-                  const sourceOrInfo = deal.source_name || deal.address || deal.room_code || '—';
-                  const isCtvTab = deal.sheet_tab === 'Hoa hồng Hiền ctv';
+                  const infoText = deal.address || deal.source_name || deal.room_code || '—';
                   const rowSheetUrl =
                     deal.sheet_url ||
-                    `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${isCtvTab ? '153848228' : '1437379975'}`;
+                    `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${HIEN_CTV_GID}`;
 
                   return (
                     <tr key={deal.id} className="hover:bg-slate-50/80 transition-colors">
                       {/* Tên khách hàng */}
                       <td className="py-3 px-3.5 whitespace-nowrap">
                         <div className="font-bold text-slate-900 text-sm">{custName}</div>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <span
-                            className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
-                              isCtvTab
-                                ? 'bg-teal-50 text-teal-700 border border-teal-200'
-                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            }`}
-                          >
-                            {isCtvTab ? 'Hiền CTV' : 'Hoa Hồng'}
-                          </span>
-                          {deal.sheet_row && (
-                            <span className="text-[10px] text-slate-400">Dòng #{deal.sheet_row}</span>
-                          )}
-                        </div>
+                        {deal.sheet_row && (
+                          <div className="text-[10px] text-slate-400">Dòng #{deal.sheet_row}</div>
+                        )}
                       </td>
 
                       {/* Số điện thoại */}
@@ -717,18 +636,7 @@ export default function CommissionsPage() {
 
                       {/* Thời gian chốt */}
                       <td className="py-3 px-3.5 whitespace-nowrap font-medium text-slate-600">
-                        <div>{formatDateOnly(dealDate)}</div>
-                        {deal.move_in_date && (
-                          <div className="text-[10px] text-slate-400">Vào ở: {deal.move_in_date}</div>
-                        )}
-                      </td>
-
-                      {/* Nguồn / Địa chỉ */}
-                      <td className="py-3 px-3.5 max-w-[200px]">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-teal-50 border border-teal-200 text-teal-900 font-semibold truncate max-w-full">
-                          <Building className="w-3 h-3 text-teal-600 shrink-0" />
-                          <span className="truncate">{sourceOrInfo}</span>
-                        </span>
+                        {formatDateOnly(dealDate)}
                       </td>
 
                       {/* Hoa hồng (%) */}
@@ -738,12 +646,7 @@ export default function CommissionsPage() {
                         </span>
                       </td>
 
-                      {/* Thành Tiền */}
-                      <td className="py-3 px-3.5 whitespace-nowrap text-right tabular-nums">
-                        <div className="font-bold text-emerald-700 text-sm">{formatVND(comm)}</div>
-                      </td>
-
-                      {/* Đã thanh toán & Thời gian TT */}
+                      {/* Đã thanh toán */}
                       <td className="py-3 px-3.5 whitespace-nowrap text-center">
                         <div>
                           <span
@@ -764,30 +667,34 @@ export default function CommissionsPage() {
                         )}
                       </td>
 
-                      {/* Bằng chứng & Ghi chú */}
-                      <td className="py-3 px-3.5 max-w-[210px]">
-                        <div className="space-y-1">
-                          {deal.evidence_url && (
-                            <a
-                              href={deal.evidence_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[11px] font-medium"
-                            >
-                              <FolderOpen className="w-3 h-3" />
-                              <span>Bằng chứng Drive</span>
-                              <ExternalLink className="w-2.5 h-2.5" />
-                            </a>
-                          )}
-                          {deal.note && (
-                            <div className="text-[11px] text-slate-600 truncate" title={deal.note}>
-                              {deal.note}
-                            </div>
-                          )}
-                          {!deal.evidence_url && !deal.note && (
-                            <span className="text-slate-300">—</span>
-                          )}
+                      {/* Thành Tiền */}
+                      <td className="py-3 px-3.5 whitespace-nowrap text-right tabular-nums">
+                        <div className="font-bold text-emerald-700 text-sm">{formatVND(comm)}</div>
+                      </td>
+
+                      {/* Thông tin */}
+                      <td className="py-3 px-3.5 max-w-[200px]">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-teal-50 border border-teal-200 text-teal-900 font-semibold truncate max-w-full">
+                          <Building className="w-3 h-3 text-teal-600 shrink-0" />
+                          <span className="truncate">{infoText}</span>
+                        </span>
+                      </td>
+
+                      {/* Thời gian vào */}
+                      <td className="py-3 px-3.5 whitespace-nowrap text-slate-600 font-medium">
+                        {deal.move_in_date || <span className="text-slate-300">—</span>}
+                      </td>
+
+                      {/* Ghi chú / Tháng */}
+                      <td className="py-3 px-3.5 max-w-[200px]">
+                        <div className="text-[11px] font-semibold text-slate-500">
+                          {getMonthBadge(dealDate)}
                         </div>
+                        {deal.note && (
+                          <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded mt-0.5 truncate" title={deal.note}>
+                            {deal.note}
+                          </div>
+                        )}
                       </td>
 
                       {/* Thao tác */}
@@ -797,7 +704,7 @@ export default function CommissionsPage() {
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-semibold text-xs shadow-2xs transition-colors"
-                          title="Xem trực tiếp dòng này trên Google Sheet gốc"
+                          title="Xem trực tiếp dòng này trên tab Hoa hồng Hiền ctv"
                         >
                           <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
                           <span>Xem ở Sheet</span>
@@ -853,7 +760,6 @@ export default function CommissionsPage() {
       <DealClosingModal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
-        defaultSheetTab={selectedTab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng'}
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ['commissions'] });
           queryClient.invalidateQueries({ queryKey: ['commission-stats'] });
@@ -869,10 +775,10 @@ export default function CommissionsPage() {
                 <FileSpreadsheet className="w-5 h-5" />
                 <div>
                   <h3 className="font-bold text-base">
-                    Liên kết & Tự động thêm Hoa Hồng vào Google Sheet
+                    Cấu hình tự động đồng bộ tab "Hoa hồng Hiền ctv"
                   </h3>
                   <p className="text-xs text-emerald-100">
-                    Sheet đang gắn: {sheetId} (Tab Hoa Hồng & Hoa hồng Hiền ctv)
+                    Đã cài sẵn công thức tự động điền từ Dòng 12 trên tab Hoa hồng Hiền ctv
                   </p>
                 </div>
               </div>
@@ -885,46 +791,23 @@ export default function CommissionsPage() {
               </button>
             </div>
 
-            <div className="p-5 space-y-5 max-h-[80vh] overflow-y-auto text-xs sm:text-sm text-slate-700">
-              {/* Cách 1: Tự động ghi trực tiếp vào dòng tiếp theo của tab Hoa Hồng */}
-              <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-3">
-                <div className="font-bold text-emerald-950 flex items-center justify-between">
-                  <span>
-                    Cách 1 (Khuyên dùng): Tự động điền thẳng vào dòng trống tiếp theo (Dòng 19, 20...) trên Sheet gốc
-                  </span>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                    Giữ nguyên Checkbox & Thống kê
-                  </span>
+            <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto text-xs sm:text-sm text-slate-700">
+              <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-2">
+                <div className="font-bold text-emerald-950">
+                  ✅ Đã kích hoạt tự động thêm dòng mới vào tab "Hoa hồng Hiền ctv"
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Vì bảng <strong>Hoa Hồng</strong> của bạn có sẵn ô tích Checkbox ở cột G và Bảng Thống Kê ở cột M-N, bạn chỉ cần gắn đoạn mã cầu nối 1 lần vào file Google Sheet:
+                  Tại <strong>Dòng 12</strong> (ô <code>A12</code> và <code>H12</code>) của bảng{' '}
+                  <strong>Hoa hồng Hiền ctv</strong> trên Google Sheet của bạn đã được gắn sẵn công thức tự động kéo các deal mới nhập từ web về, đồng thời giữ nguyên ô Checkbox cột <code>F</code>, công thức <code>Thành Tiền</code> cột <code>G</code> và công thức <code>Tháng</code> cột <code>L</code>.
                 </p>
-                <ol className="list-decimal list-inside space-y-1 text-xs text-slate-700">
-                  <li>
-                    Mở file{' '}
-                    <a
-                      href={currentSheetUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-emerald-700 font-semibold underline"
-                    >
-                      Google Sheet Hoa Hồng của bạn
-                    </a>
-                    , trên thanh menu chọn <strong>Tiện ích mở rộng (Extensions) → Apps Script</strong>.
-                  </li>
-                  <li>
-                    Xoá mã mặc định, nhấn nút <strong>Sao chép mã Apps Script</strong> bên dưới rồi dán vào và bấm Lưu.
-                  </li>
-                  <li>
-                    Nhấn <strong>Triển khai (Deploy) → Triển khai mới (New deployment)</strong>, chọn loại <strong>Ứng dụng web (Web app)</strong>, mục <em>Ai có quyền truy cập</em> chọn <strong>Bất kỳ ai (Anyone)</strong> rồi nhấn Triển khai.
-                  </li>
-                  <li>
-                    Dán đường link <strong>URL ứng dụng web</strong> vừa nhận được vào ô bên dưới và bấm Lưu. Từ đó về sau, mỗi khi bạn thêm/sửa hoa hồng trên web, dòng mới sẽ tự động nhảy vào đúng dòng 19, 20... trên Sheet!
-                  </li>
-                </ol>
+              </div>
 
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="font-bold text-slate-900">
+                  Tùy chọn nâng cao: Ghi trực tiếp giá trị tĩnh qua Apps Script Webhook
+                </div>
                 <div className="flex items-center justify-between bg-slate-900 text-slate-100 px-3 py-2 rounded-lg font-mono text-[11px] overflow-x-auto">
-                  <span className="truncate mr-2">function doPost(e) &#123; /* Cầu nối tự động ghi vào tab Hoa Hồng */ &#125;</span>
+                  <span className="truncate mr-2">function doPost(e) &#123; /* Ghi vào Hoa hồng Hiền ctv */ &#125;</span>
                   <button
                     type="button"
                     onClick={() =>
@@ -942,8 +825,8 @@ export default function CommissionsPage() {
                     type="text"
                     value={webhookInput}
                     onChange={(e) => setWebhookInput(e.target.value)}
-                    placeholder="Dán link https://script.google.com/macros/s/.../exec vào đây"
-                    className="flex-1 rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs focus:outline-none focus:border-emerald-600"
+                    placeholder="Dán link https://script.google.com/macros/s/.../exec (nếu dùng Webhook)"
+                    className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:outline-none focus:border-emerald-600"
                   />
                   <button
                     type="button"
@@ -951,51 +834,8 @@ export default function CommissionsPage() {
                     disabled={saveConfigMutation.isPending}
                     className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shrink-0"
                   >
-                    {saveConfigMutation.isPending ? 'Đang lưu...' : 'Lưu kết nối tự động'}
+                    {saveConfigMutation.isPending ? 'Đang lưu...' : 'Lưu Webhook'}
                   </button>
-                </div>
-              </div>
-
-              {/* Cách 2: Công thức IMPORTDATA trực tiếp */}
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
-                <div className="font-bold text-slate-900">
-                  Cách 2 (Không cần cài Script): Dùng công thức tự động kéo bảng hoa hồng từ Web về Sheet
-                </div>
-                <p className="text-xs text-slate-600">
-                  Dán công thức dưới đây vào ô <code>A1</code> của một trang tính mới trong Google Sheet để Google Sheet tự động đồng bộ toàn bộ danh sách hoa hồng từ web:
-                </p>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
-                    <code className="text-[11px] text-emerald-800 font-mono truncate">
-                      {importFormulaMain}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyText(importFormulaMain, 'f_main', 'Đã chép công thức bảng Hoa Hồng chính!')
-                      }
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold shrink-0"
-                    >
-                      {copiedKey === 'f_main' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>Chép (Bảng chính)</span>
-                    </button>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
-                    <code className="text-[11px] text-teal-800 font-mono truncate">
-                      {importFormulaAll}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyText(importFormulaAll, 'f_all', 'Đã chép công thức toàn bộ hoa hồng!')
-                      }
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold shrink-0"
-                    >
-                      {copiedKey === 'f_all' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>Chép (Tất cả bảng)</span>
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
@@ -1033,6 +873,7 @@ export default function CommissionsPage() {
                 commission_amount: numComm,
                 deal_date: editForm.deal_date,
                 closed_date: editForm.deal_date,
+                move_in_date: editForm.move_in_date,
                 commission_status: editForm.commission_status,
                 status: editForm.commission_status,
                 commission_received:
@@ -1040,8 +881,7 @@ export default function CommissionsPage() {
                     ? numComm
                     : Number(editForm.commission_received) || 0,
                 payment_date: editForm.payment_date,
-                evidence_url: editForm.evidence_url,
-                sheet_tab: editForm.sheet_tab,
+                sheet_tab: 'Hoa hồng Hiền ctv',
                 note: editForm.note,
               });
             }}
@@ -1050,10 +890,10 @@ export default function CommissionsPage() {
             <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div>
                 <h3 className="font-bold text-base text-slate-900">
-                  Sửa Deal: {editingDeal.customer_name || ''} ({editingDeal.source_name || editingDeal.room_code || ''})
+                  Sửa Deal: {editingDeal.customer_name || ''} ({editingDeal.address || editingDeal.source_name || ''})
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Cập nhật thông tin và đồng bộ với dòng #{editingDeal.sheet_row || 'mới'} trên Google Sheet
+                  Cập nhật thông tin dòng #{editingDeal.sheet_row || 'mới'} trên bảng Hoa hồng Hiền ctv
                 </p>
               </div>
               <button
@@ -1095,28 +935,27 @@ export default function CommissionsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Nguồn / Địa chỉ phòng
+                    Thông tin (Địa chỉ / Khu vực)
                   </label>
                   <input
                     type="text"
                     value={editForm.source_name}
                     onChange={(e) => setEditForm((p) => ({ ...p, source_name: e.target.value }))}
-                    placeholder="VD: TNR, TL21, a Tuyên..."
+                    placeholder="VD: 128 Đình Thôn, Phú Đô..."
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Bảng Google Sheet
+                    Thời gian vào ở
                   </label>
-                  <select
-                    value={editForm.sheet_tab}
-                    onChange={(e) => setEditForm((p) => ({ ...p, sheet_tab: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white font-medium"
-                  >
-                    <option value="Hoa Hồng">Bảng Hoa Hồng (Chính)</option>
-                    <option value="Hoa hồng Hiền ctv">Hoa hồng Hiền CTV</option>
-                  </select>
+                  <input
+                    type="text"
+                    value={editForm.move_in_date}
+                    onChange={(e) => setEditForm((p) => ({ ...p, move_in_date: e.target.value }))}
+                    placeholder="VD: 1/11/26"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
                 </div>
               </div>
 
@@ -1187,7 +1026,7 @@ export default function CommissionsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Trạng thái thanh toán
+                    Đã thanh toán
                   </label>
                   <select
                     value={editForm.commission_status}
@@ -1210,23 +1049,10 @@ export default function CommissionsPage() {
                     type="text"
                     value={editForm.payment_date}
                     onChange={(e) => setEditForm((p) => ({ ...p, payment_date: e.target.value }))}
-                    placeholder="VD: 10/07/2026"
+                    placeholder="VD: 24/11/2026"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Link bằng chứng (Google Drive)
-                </label>
-                <input
-                  type="text"
-                  value={editForm.evidence_url}
-                  onChange={(e) => setEditForm((p) => ({ ...p, evidence_url: e.target.value }))}
-                  placeholder="https://drive.google.com/..."
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
               </div>
 
               <div>

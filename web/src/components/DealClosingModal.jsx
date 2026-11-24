@@ -6,15 +6,14 @@ import { formatPrice, formatVND } from '../utils/format';
 import { useToast } from './Toast';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 
-const RATE_PRESETS = [5, 10, 25, 30, 40, 50, 100];
-const SOURCE_PRESETS = ['TNR', 'TL21', 'a Tuyên', 'Đắc Thích', 'HappyHouse', 'alophongtro', 'a Đức Hoà bình 7', 'ngoài'];
+const RATE_PRESETS = [5, 10, 15, 20, 30, 50];
+const SOURCE_PRESETS = ['128 Đình Thôn', 'Hoàng Quốc Việt', 'Phú Đô', 'Bùi Xương Trạch', 'Phùng Khoang', 'Mỹ Đình', 'Phú Diễn', 'Yên Xá', 'Dương Nội'];
 
 export default function DealClosingModal({
   isOpen,
   onClose,
   customer = null,
   initialRoom = null,
-  defaultSheetTab = 'Hoa Hồng',
   onSuccess = null,
 }) {
   const queryClient = useQueryClient();
@@ -34,7 +33,7 @@ export default function DealClosingModal({
     enabled: isOpen,
   });
 
-  const [sheetTab, setSheetTab] = useState(defaultSheetTab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng');
+  const sheetTab = 'Hoa hồng Hiền ctv';
   const [selectedCustomerId, setSelectedCustomerId] = useState(customer?.id || '');
   const [customCustomerName, setCustomCustomerName] = useState(customer?.name || '');
   const [customCustomerPhone, setCustomCustomerPhone] = useState(customer?.zalo_phone || '');
@@ -48,23 +47,16 @@ export default function DealClosingModal({
   );
 
   const [rentPrice, setRentPrice] = useState(initialRoom?.price ? String(initialRoom.price) : '3500000');
-  const [commissionRate, setCommissionRate] = useState(defaultSheetTab === 'Hoa hồng Hiền ctv' ? 10 : 50);
-  const [commissionAmount, setCommissionAmount] = useState(defaultSheetTab === 'Hoa hồng Hiền ctv' ? '350000' : '1750000');
+  const [commissionRate, setCommissionRate] = useState(10);
+  const [commissionAmount, setCommissionAmount] = useState('350000');
   const [closedDate, setClosedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [moveInDate, setMoveInDate] = useState('');
   const [commissionStatus, setCommissionStatus] = useState('cho_thu');
   const [paymentDate, setPaymentDate] = useState('');
   const [evidenceUrl, setEvidenceUrl] = useState('');
   const [updateRoomStatus, setUpdateRoomStatus] = useState(true);
   const [roomTargetStatus, setRoomTargetStatus] = useState('da_coc');
   const [note, setNote] = useState('');
-
-  useEffect(() => {
-    if (defaultSheetTab === 'Hoa hồng Hiền ctv') {
-      setSheetTab('Hoa hồng Hiền ctv');
-    } else if (defaultSheetTab === 'Hoa Hồng') {
-      setSheetTab('Hoa Hồng');
-    }
-  }, [defaultSheetTab]);
 
   // Sync when customer prop changes
   useEffect(() => {
@@ -182,6 +174,7 @@ export default function DealClosingModal({
         commission_received: commissionStatus === 'da_thu' ? numCommission : 0,
         received_amount: commissionStatus === 'da_thu' ? numCommission : 0,
         payment_date: paymentDate.trim(),
+        move_in_date: moveInDate.trim(),
         evidence_url: evidenceUrl.trim(),
         sheet_tab: sheetTab,
         mark_room_rented: updateRoomStatus ? roomTargetStatus : false,
@@ -276,43 +269,6 @@ export default function DealClosingModal({
           }}
           className="p-5 space-y-4 max-h-[80vh] overflow-y-auto"
         >
-          {/* Sheet Tab Selection */}
-          <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-emerald-900">
-              Bảng Google Sheet lưu hoa hồng:
-            </span>
-            <div className="inline-flex rounded-lg bg-white p-1 border border-emerald-200 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  setSheetTab('Hoa Hồng');
-                  if (commissionRate === 10) handleRateChange(50);
-                }}
-                className={`px-3 py-1 rounded-md font-semibold transition-colors ${
-                  sheetTab === 'Hoa Hồng'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Bảng Hoa Hồng (Chính)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSheetTab('Hoa hồng Hiền ctv');
-                  handleRateChange(10);
-                }}
-                className={`px-3 py-1 rounded-md font-semibold transition-colors ${
-                  sheetTab === 'Hoa hồng Hiền ctv'
-                    ? 'bg-teal-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Hoa hồng Hiền CTV
-              </button>
-            </div>
-          </div>
-
           {/* Customer section */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
             <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
@@ -634,6 +590,18 @@ export default function DealClosingModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200/80">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Thời gian vào ở
+                </label>
+                <input
+                  type="text"
+                  value={moveInDate}
+                  onChange={(e) => setMoveInDate(e.target.value)}
+                  placeholder="VD: 1/11/26"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
                   Thời gian thanh toán
                 </label>
                 <input
@@ -641,18 +609,6 @@ export default function DealClosingModal({
                   value={paymentDate}
                   onChange={(e) => setPaymentDate(e.target.value)}
                   placeholder="VD: 24/11/2026"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs bg-white"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Link bằng chứng (Google Drive / Ảnh)
-                </label>
-                <input
-                  type="text"
-                  value={evidenceUrl}
-                  onChange={(e) => setEvidenceUrl(e.target.value)}
-                  placeholder="https://drive.google.com/..."
                   className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs bg-white"
                 />
               </div>

@@ -260,12 +260,18 @@ async function ensureSchema(db) {
   } catch {}
 
   try {
+    await db.prepare("DELETE FROM deals WHERE sheet_tab = 'Hoa Hồng' OR sheet_key LIKE '%:1437379975:%'").run();
     await db.prepare(`
       DELETE FROM deals
       WHERE sheet_key IS NOT NULL AND sheet_key != ''
         AND id NOT IN (
           SELECT MIN(id) FROM deals WHERE sheet_key IS NOT NULL AND sheet_key != '' GROUP BY sheet_key
         )
+    `).run();
+    await db.prepare(`
+      DELETE FROM customers
+      WHERE source = 'commission_sheet'
+        AND id NOT IN (SELECT customer_id FROM deals WHERE customer_id IS NOT NULL)
     `).run();
     const sheetDealsCount = await db.prepare('SELECT count(*) as count FROM deals WHERE sheet_key IS NOT NULL').first();
     if (!sheetDealsCount || sheetDealsCount.count === 0) {
@@ -1130,7 +1136,6 @@ function generateCustomersCsv(customers) {
 
 const DEFAULT_COMMISSION_SPREADSHEET_ID = '1rKFwKPXMBwN5vvt-gUiCgHTzuRmlN7LiF7VGYNf8gCI';
 const COMMISSION_TABS = [
-  { name: 'Hoa Hồng', gid: '1437379975', layout: 'main' },
   { name: 'Hoa hồng Hiền ctv', gid: '153848228', layout: 'ctv' },
 ];
 
@@ -1295,9 +1300,9 @@ async function pushDealToCommissionSheet(db, action, deal) {
     .catch(() => null);
   const spreadsheetId = spreadsheetRow?.value || DEFAULT_COMMISSION_SPREADSHEET_ID;
 
-  const tabName = deal.sheet_tab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng';
-  const tabMeta = COMMISSION_TABS.find((t) => t.name === tabName) || COMMISSION_TABS[0];
-  const rowValues = buildSheetRowForDeal(deal, tabMeta.layout);
+  const tabName = 'Hoa hồng Hiền ctv';
+  const tabMeta = COMMISSION_TABS[0];
+  const rowValues = buildSheetRowForDeal(deal, 'ctv');
 
   let targetRow = deal.sheet_row ? Number(deal.sheet_row) : null;
   if (!targetRow) {
@@ -1502,7 +1507,7 @@ async function syncCommissionSheet(db, customSpreadsheetId = '') {
         rate = Number.isFinite(parsedRate) ? parsedRate : (price > 0 && amount > 0 ? Math.round((amount / price) * 100) : 10);
         paymentDate = String(row[7] || '').trim();
         address = String(row[8] || '').trim();
-        sourceName = address ? `${address} (Hiền CTV)` : 'Hiền CTV';
+        sourceName = address || 'Phòng chốt';
         moveInDate = String(row[9] || '').trim();
         note = String(row[10] || '').trim();
       }
@@ -1660,14 +1665,21 @@ async function syncCommissionSheet(db, customSpreadsheetId = '') {
     }
   }
 
-  // Deduplicate any concurrent sheet_key rows
+  // Remove any deals from old Hoa Hồng tab and deduplicate concurrent sheet_key rows
   try {
+    await db.prepare("DELETE FROM deals WHERE sheet_tab = 'Hoa Hồng' OR sheet_key LIKE '%:1437379975:%'").run();
     await db.prepare(`
       DELETE FROM deals
       WHERE sheet_key IS NOT NULL AND sheet_key != ''
         AND id NOT IN (
           SELECT MIN(id) FROM deals WHERE sheet_key IS NOT NULL AND sheet_key != '' GROUP BY sheet_key
         )
+    `).run();
+
+    await db.prepare(`
+      DELETE FROM customers
+      WHERE source = 'commission_sheet'
+        AND id NOT IN (SELECT customer_id FROM deals WHERE customer_id IS NOT NULL)
     `).run();
 
     await db.prepare(`
@@ -1688,45 +1700,23 @@ async function syncCommissionSheet(db, customSpreadsheetId = '') {
   };
 }
 
-function generateCommissionsCsv(deals, tabFilter = '') {
-  const isCtv = tabFilter === 'Hoa hồng Hiền ctv';
-  const headers = isCtv
-    ? [
-        'Tên khách hàng',
-        'số điện thoại',
-        'Giá phòng',
-        'thời gian chốt',
-        'Hoa hồng',
-        'Đã thanh toán',
-        'Thành Tiền',
-        'Thời Gian Thanh toán',
-        'Thông tin',
-        'Thời gian vào',
-        'Ghi chú',
-        'Tháng',
-      ]
-    : [
-        'Tên khách hàng',
-        'số điện thoại',
-        'Giá phòng',
-        'thời gian chốt',
-        'nguồn',
-        'Hoa hồng',
-        'Đã thanh toán',
-        'Thành Tiền',
-        'Thời Gian Thanh toán',
-        'bằng chứng',
-        'Ghi chú',
-        'Bảng',
-      ];
+function generateCommissionsCsv(deals) {
+  const headers = [
+    'Tên khách hàng',
+    'số điện thoại',
+    'Giá phòng',
+    'thời gian chốt',
+    'Hoa hồng',
+    'Đã thanh toán',
+    'Thành Tiền',
+    'Thời Gian Thanh toán',
+    'Thông tin',
+    'Thời gian vào',
+    'Ghi chú',
+    'Tháng',
+  ];
 
-  const rows = deals.map((d) => {
-    const rowVals = buildSheetRowForDeal(d, isCtv ? 'ctv' : 'main');
-    if (!isCtv) {
-      rowVals.push(d.sheet_tab || 'Hoa Hồng');
-    }
-    return rowVals;
-  });
+  const rows = deals.map((d) => buildSheetRowForDeal(d, 'ctv'));
 
   const escapeCell = (val) => {
     const s = String(val === null || val === undefined ? '' : val);
@@ -2161,7 +2151,7 @@ export async function onRequest(context) {
           const roomCode = String(body.room_code || sourceName || '').trim();
           const paymentDate = String(body.payment_date || (commStatus === 'da_thu' ? formatFullSheetDate(dealDate) : '')).trim();
           const evidenceUrl = String(body.evidence_url || '').trim();
-          const sheetTab = body.sheet_tab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng';
+          const sheetTab = 'Hoa hồng Hiền ctv';
 
           await db.prepare(`
             UPDATE customers SET
@@ -2390,7 +2380,7 @@ export async function onRequest(context) {
           }
           return jsonResponse({
             spreadsheet_id: spreadsheetId,
-            sheet_url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=1437379975`,
+            sheet_url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=153848228`,
             webhook_url: wh?.value || '',
             has_service_account: Boolean(serviceAccountEmail),
             service_account_email: serviceAccountEmail,
@@ -2553,7 +2543,7 @@ export async function onRequest(context) {
               ? formatFullSheetDate(new Date().toISOString().slice(0, 10))
               : (existing.payment_date || '');
           const evidenceUrl = body.evidence_url !== undefined ? String(body.evidence_url).trim() : (existing.evidence_url || '');
-          const sheetTab = body.sheet_tab || existing.sheet_tab || 'Hoa Hồng';
+          const sheetTab = 'Hoa hồng Hiền ctv';
 
           await db
             .prepare(`
@@ -2693,7 +2683,7 @@ export async function onRequest(context) {
           body.payment_date || (status === 'da_thu' ? formatFullSheetDate(dealDate) : '')
         ).trim();
         const evidenceUrl = String(body.evidence_url || '').trim();
-        const sheetTab = body.sheet_tab === 'Hoa hồng Hiền ctv' ? 'Hoa hồng Hiền ctv' : 'Hoa Hồng';
+        const sheetTab = 'Hoa hồng Hiền ctv';
         const note = String(body.note || '').trim();
 
         const res = await db.prepare(`
